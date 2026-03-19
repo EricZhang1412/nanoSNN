@@ -1,0 +1,14 @@
+name: spikformer
+T: 4
+num_classes: 10
+image_size: 32
+patch_size: 4
+in_channels: 3
+embed_dim: 256
+depth: 4
+num_heads: 8
+mlp_ratio: 4.0
+neuron_type: lif
+tau: 2.0
+v_threshold: 1.0
+detach_reset: true

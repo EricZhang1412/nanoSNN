@@ -1,0 +1,10 @@
+name: spiking_resnet
+T: 4
+num_classes: 10
+image_size: 32
+in_channels: 3
+arch: resnet18
+neuron_type: lif
+tau: 2.0
+v_threshold: 1.0
+detach_reset: true

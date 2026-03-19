@@ -1,0 +1,155 @@
+from __future__ import annotations
+
+import math
+import time
+from typing import Any
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import lightning as L
+from lightning.pytorch.utilities.rank_zero import rank_zero_info
+from spikingjelly.activation_based import functional
+
+from .common.registry import get_model_cls
+from .common.spike_ops import expand_static_to_temporal
+
+# trigger model registration
+from . import spikformer  # noqa: F401
+from . import spike_driven_transformer  # noqa: F401
+from . import spiking_cnn  # noqa: F401
+
+
+def make_optimizer_groups(model: nn.Module, weight_decay: float):
+    decay, no_decay = [], []
+    no_decay_types = (nn.Embedding, nn.LayerNorm, nn.BatchNorm2d, nn.BatchNorm1d)
+    for module_name, module in model.named_modules():
+        for param_name, param in module.named_parameters(recurse=False):
+            if isinstance(module, no_decay_types) or param_name == "bias" or param.ndim < 2:
+                no_decay.append(param)
+            else:
+                decay.append(param)
+    return [
+        {"params": decay, "weight_decay": weight_decay},
+        {"params": no_decay, "weight_decay": 0.0},
+    ]
+
+
+class LitVisionSNN(L.LightningModule):
+    def __init__(self, model: nn.Module, optimizer_config: Any, train_config: Any, data_config: Any):
+        super().__init__()
+        self.model = model
+        self.optimizer_config = optimizer_config
+        self.train_config = train_config
+        self.data_config = data_config
+        self.save_hyperparameters(ignore=["model"])
+
+        self.T = int(getattr(model, "T", getattr(optimizer_config, "T", 4)))
+        self._is_event_input = bool(getattr(data_config, "is_event", False))
+        self._step_start_time = None
+
+    def _prepare_input(self, x: torch.Tensor) -> torch.Tensor:
+        if self._is_event_input:
+            # already [T, B, C, H, W]
+            return x
+        # static image [B, C, H, W] -> [T, B, C, H, W]
+        return expand_static_to_temporal(x, self.T)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self._prepare_input(x)
+        logits = self.model(x)
+        functional.reset_net(self.model)
+        return logits
+
+    def _shared_step(self, batch, split: str):
+        x, y = batch
+        logits = self(x)
+        loss = F.cross_entropy(logits, y)
+
+        num_classes = logits.size(1)
+        topk = (1, 5) if num_classes >= 5 else (1,)
+        with torch.no_grad():
+            maxk = min(max(topk), num_classes)
+            _, pred = logits.topk(maxk, dim=1, largest=True, sorted=True)
+            pred = pred.t()
+            correct = pred.eq(y.view(1, -1).expand_as(pred))
+            top1 = correct[:1].reshape(-1).float().mean()
+            top5 = correct[:min(5, num_classes)].reshape(-1).float().mean() if num_classes >= 5 else top1
+
+        sync = split != "train"
+        self.log(f"{split}/loss", loss, prog_bar=True, on_step=(split == "train"),
+                 on_epoch=True, sync_dist=sync)
+        self.log(f"{split}/top1", top1, prog_bar=True, on_step=False,
+                 on_epoch=True, sync_dist=sync)
+        if num_classes >= 5:
+            self.log(f"{split}/top5", top5, on_step=False, on_epoch=True, sync_dist=sync)
+        return loss
+
+    def training_step(self, batch, batch_idx: int):
+        return self._shared_step(batch, "train")
+
+    def validation_step(self, batch, batch_idx: int):
+        self._shared_step(batch, "val")
+
+    def test_step(self, batch, batch_idx: int):
+        self._shared_step(batch, "test")
+
+    def on_train_batch_start(self, batch, batch_idx):
+        if self.trainer.is_global_zero:
+            self._step_start_time = time.perf_counter()
+
+    def on_train_batch_end(self, outputs, batch, batch_idx):
+        if self._step_start_time is not None and self.trainer.is_global_zero:
+            elapsed = time.perf_counter() - self._step_start_time
+            x, _ = batch
+            imgs = x.shape[0] if x.ndim == 4 else x.shape[1]
+            self.log("train/imgs_per_sec", imgs / elapsed, on_step=True, sync_dist=False)
+
+    def configure_optimizers(self):
+        lr = float(getattr(self.optimizer_config, "lr", 1e-3))
+        b1 = float(getattr(self.optimizer_config, "beta1", 0.9))
+        b2 = float(getattr(self.optimizer_config, "beta2", 0.999))
+        weight_decay = float(getattr(self.optimizer_config, "weight_decay", 0.0))
+
+        optim_groups = make_optimizer_groups(self.model, weight_decay)
+        optimizer = torch.optim.AdamW(optim_groups, lr=lr, betas=(b1, b2))
+
+        sched_name = str(getattr(self.optimizer_config, "scheduler", "cosine")).lower()
+        if sched_name != "cosine":
+            rank_zero_info(f"Unknown scheduler={sched_name}; using optimizer only.")
+            return optimizer
+
+        max_steps = int(getattr(self.train_config, "max_steps", 0) or 0)
+        warmup_steps = int(getattr(self.optimizer_config, "warmup_steps", 0) or 0)
+        min_lr_ratio = float(getattr(self.optimizer_config, "min_lr_ratio", 0.1))
+
+        if max_steps <= 0:
+            rank_zero_info("scheduler=cosine but max_steps not set; using optimizer only.")
+            return optimizer
+
+        def lr_lambda(step: int):
+            if step < warmup_steps:
+                return float(step) / float(max(1, warmup_steps))
+            progress = (step - warmup_steps) / float(max(1, max_steps - warmup_steps))
+            progress = min(max(progress, 0.0), 1.0)
+            cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
+            return min_lr_ratio + (1.0 - min_lr_ratio) * cosine
+
+        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
+        return {"optimizer": optimizer, "lr_scheduler": {"scheduler": scheduler, "interval": "step"}}
+
+
+def build_model(model_config: Any, optimizer_config: Any, train_config: Any, data_config: Any) -> LitVisionSNN:
+    name = str(model_config.name).lower()
+    model_cls = get_model_cls(name)
+    model = model_cls(model_config)
+
+    total_params = sum(p.numel() for p in model.parameters())
+    rank_zero_info(f"Model: {model.__class__.__name__}  params={total_params:,}")
+
+    return LitVisionSNN(
+        model=model,
+        optimizer_config=optimizer_config,
+        train_config=train_config,
+        data_config=data_config,
+    )

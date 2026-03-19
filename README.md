@@ -1,5 +1,11 @@
 # nanoSNN
 
+[![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.6.0-ee4c2c.svg)](https://pytorch.org/)
+[![Lightning](https://img.shields.io/badge/Lightning-2.x-792ee5.svg)](https://lightning.ai/)
+[![uv](https://img.shields.io/badge/dependencies-uv-6e56cf.svg)](https://github.com/astral-sh/uv)
+[![GitHub stars](https://img.shields.io/github/stars/EricZhang1412/nanoSNN?style=social)](https://github.com/EricZhang1412/nanoSNN)
+
 nanoSNN is a general vision SNN training framework inspired by `nanoLMengine`.
 It provides a config-driven training workflow for representative spiking vision models, with a unified `train.py` entrypoint, Lightning-based training loop, checkpoint resume support, and reusable dataset/model building blocks.
 

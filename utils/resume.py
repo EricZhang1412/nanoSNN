@@ -1,4 +1,13 @@
 from pathlib import Path
+from types import SimpleNamespace
+
+import torch
+
+
+def register_checkpoint_safe_globals():
+    add_safe_globals = getattr(torch.serialization, "add_safe_globals", None)
+    if add_safe_globals is not None:
+        add_safe_globals([SimpleNamespace])
 
 
 def resolve_resume_ckpt(resume, ckpt_dir):

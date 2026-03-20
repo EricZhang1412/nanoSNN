@@ -1,5 +1,5 @@
 name: cifar100
-root: ./data/cifar100
+root: /data/maluzhang-folder/datasets/CIFAR100
 num_classes: 100
 image_size: 32
 in_channels: 3

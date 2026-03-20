@@ -13,7 +13,7 @@ from lightning.pytorch.loggers import TensorBoardLogger, WandbLogger
 from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
 
 from utils.load_config import load_config
-from utils.resume import resolve_resume_ckpt
+from utils.resume import register_checkpoint_safe_globals, resolve_resume_ckpt
 from utils.callbacks import EpochTimerCallback
 from data import VisionDataModule
 from models.build_model import build_model
@@ -140,6 +140,7 @@ def train(args):
     rank_zero_info(f"Total params: {total_params:,}")
 
     trainer = Trainer(**trainer_kwargs)
+    register_checkpoint_safe_globals()
     ckpt_path = resolve_resume_ckpt(args.resume, ckpt_dir)
     if ckpt_path:
         rank_zero_info(f"Resuming from: {ckpt_path}")

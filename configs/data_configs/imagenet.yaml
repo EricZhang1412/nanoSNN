@@ -1,5 +1,5 @@
 name: imagenet
-root: ./data/imagenet
+root: /data/maluzhang-folder/datasets/imagenet-1k
 num_classes: 1000
 image_size: 224
 in_channels: 3

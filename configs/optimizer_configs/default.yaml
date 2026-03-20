@@ -3,5 +3,5 @@ beta1: 0.9
 beta2: 0.999
 weight_decay: 0.05
 scheduler: cosine
-warmup_steps: 1000
+warmup_epochs: 20
 min_lr_ratio: 0.1

@@ -13,6 +13,7 @@ from spikingjelly.activation_based import functional
 
 from .common.registry import get_model_cls
 from .common.spike_ops import expand_static_to_temporal
+from utils import accuracy_at_k
 
 # trigger model registration
 from . import spikformer  # noqa: F401
@@ -68,21 +69,15 @@ class LitVisionSNN(L.LightningModule):
 
         num_classes = logits.size(1)
         topk = (1, 5) if num_classes >= 5 else (1,)
-        with torch.no_grad():
-            maxk = min(max(topk), num_classes)
-            _, pred = logits.topk(maxk, dim=1, largest=True, sorted=True)
-            pred = pred.t()
-            correct = pred.eq(y.view(1, -1).expand_as(pred))
-            top1 = correct[:1].reshape(-1).float().mean()
-            top5 = correct[:min(5, num_classes)].reshape(-1).float().mean() if num_classes >= 5 else top1
+        accs = accuracy_at_k(logits, y, topk=topk)
 
         sync = split != "train"
         self.log(f"{split}/loss", loss, prog_bar=True, on_step=(split == "train"),
                  on_epoch=True, sync_dist=sync)
-        self.log(f"{split}/top1", top1, prog_bar=True, on_step=False,
+        self.log(f"{split}/top1", accs["top1"], prog_bar=True, on_step=False,
                  on_epoch=True, sync_dist=sync)
         if num_classes >= 5:
-            self.log(f"{split}/top5", top5, on_step=False, on_epoch=True, sync_dist=sync)
+            self.log(f"{split}/top5", accs["top5"], on_step=False, on_epoch=True, sync_dist=sync)
         return loss
 
     def training_step(self, batch, batch_idx: int):
@@ -119,24 +114,25 @@ class LitVisionSNN(L.LightningModule):
             rank_zero_info(f"Unknown scheduler={sched_name}; using optimizer only.")
             return optimizer
 
-        max_steps = int(getattr(self.train_config, "max_steps", 0) or 0)
-        warmup_steps = int(getattr(self.optimizer_config, "warmup_steps", 0) or 0)
         min_lr_ratio = float(getattr(self.optimizer_config, "min_lr_ratio", 0.1))
+        max_epochs = int(getattr(self.train_config, "trainer", None) and
+                         getattr(self.train_config.trainer, "max_epochs", 0) or 0)
+        warmup_epochs = int(getattr(self.optimizer_config, "warmup_epochs", 0) or 0)
 
-        if max_steps <= 0:
-            rank_zero_info("scheduler=cosine but max_steps not set; using optimizer only.")
+        if max_epochs <= 0:
+            rank_zero_info("scheduler=cosine requires trainer.max_epochs; using optimizer only.")
             return optimizer
 
-        def lr_lambda(step: int):
-            if step < warmup_steps:
-                return float(step) / float(max(1, warmup_steps))
-            progress = (step - warmup_steps) / float(max(1, max_steps - warmup_steps))
+        def lr_lambda(epoch: int):
+            if epoch < warmup_epochs:
+                return float(epoch) / float(max(1, warmup_epochs))
+            progress = (epoch - warmup_epochs) / float(max(1, max_epochs - warmup_epochs))
             progress = min(max(progress, 0.0), 1.0)
             cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
             return min_lr_ratio + (1.0 - min_lr_ratio) * cosine
 
         scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
-        return {"optimizer": optimizer, "lr_scheduler": {"scheduler": scheduler, "interval": "step"}}
+        return {"optimizer": optimizer, "lr_scheduler": {"scheduler": scheduler, "interval": "epoch"}}
 
 
 def build_model(model_config: Any, optimizer_config: Any, train_config: Any, data_config: Any) -> LitVisionSNN:

@@ -1,1 +1,1 @@
-output_dir: ./exp/outputs
+output_dir: ./exp/outputs_autoaug_cosine

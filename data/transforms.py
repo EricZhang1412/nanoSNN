@@ -3,6 +3,9 @@ from __future__ import annotations
 import numpy as np
 import torch
 from torchvision import transforms
+from timm.data.auto_augment import rand_augment_transform, augment_and_mix_transform, auto_augment_transform
+from timm.data.random_erasing import RandomErasing
+from timm.data.transforms import str_to_pil_interp
 
 
 DATASET_STATS = {
@@ -26,12 +29,53 @@ def build_train_transform(data_config):
     image_size = int(getattr(data_config, "image_size", 224))
 
     if name in {"cifar10", "cifar100"}:
-        return transforms.Compose([
-            transforms.RandomCrop(image_size, padding=4),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            _normalize(name),
-        ])
+        mean, _ = DATASET_STATS[name]
+        hflip = float(getattr(data_config, "hflip", 0.5))
+        vflip = float(getattr(data_config, "vflip", 0.0))
+        auto_aug = getattr(data_config, "auto_augment", None)
+        color_jitter = getattr(data_config, "color_jitter", 0.4)
+        re_prob = float(getattr(data_config, "re_prob", 0.0))
+        re_mode = str(getattr(data_config, "re_mode", "const"))
+        re_count = int(getattr(data_config, "re_count", 1))
+        interpolation = str(getattr(data_config, "interpolation", "bilinear"))
+
+        # primary
+        primary_tfl = [transforms.RandomCrop(image_size, padding=4)]
+        if hflip > 0.:
+            primary_tfl.append(transforms.RandomHorizontalFlip(p=hflip))
+        if vflip > 0.:
+            primary_tfl.append(transforms.RandomVerticalFlip(p=vflip))
+
+        # secondary: AA/RA/AugMix or color jitter
+        secondary_tfl = []
+        disable_color_jitter = False
+        if auto_aug:
+            disable_color_jitter = True
+            aa_params = dict(
+                translate_const=int(image_size * 0.45),
+                img_mean=tuple(min(255, round(255 * x)) for x in mean),
+            )
+            if interpolation != "random":
+                aa_params["interpolation"] = str_to_pil_interp(interpolation)
+            if auto_aug.startswith("rand"):
+                secondary_tfl.append(rand_augment_transform(auto_aug, aa_params))
+            elif auto_aug.startswith("augmix"):
+                aa_params["translate_pct"] = 0.3
+                secondary_tfl.append(augment_and_mix_transform(auto_aug, aa_params))
+            else:
+                secondary_tfl.append(auto_augment_transform(auto_aug, aa_params))
+
+        if color_jitter is not None and not disable_color_jitter:
+            if not isinstance(color_jitter, (list, tuple)):
+                color_jitter = (float(color_jitter),) * 3
+            secondary_tfl.append(transforms.ColorJitter(*color_jitter))
+
+        # final
+        final_tfl = [transforms.ToTensor(), _normalize(name)]
+        if re_prob > 0.:
+            final_tfl.append(RandomErasing(re_prob, mode=re_mode, max_count=re_count, device="cpu"))
+
+        return transforms.Compose(primary_tfl + secondary_tfl + final_tfl)
 
     if name in {"imagenet", "imagefolder"}:
         resize_size = int(getattr(data_config, "resize_size", int(image_size / 0.875)))

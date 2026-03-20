@@ -3,8 +3,8 @@ random_seed: 42
 
 trainer:
   strategy: auto
-  precision: "bf16-mixed"
-  max_epochs: 300
+  precision: "32-true"
+  max_epochs: 320
   gradient_clip_val: 1.0
   gradient_clip_algorithm: norm
   log_every_n_steps: 50

@@ -32,6 +32,7 @@ checkpoints/
 .DS_Store
 .idea/
 .vscode/
+.claude/
 
 # Local env files
 .env

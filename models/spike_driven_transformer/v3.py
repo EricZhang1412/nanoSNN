@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import torch
 import torch.nn as nn
+from torch.nn.init import trunc_normal_
 from einops import rearrange
 
 
@@ -203,6 +204,18 @@ class SDTv3ConvAttnMLPBlock(nn.Module):
 
 @register_model("sdt_v3")
 class SpikeDrivenTransformerV3(nn.Module):
+    def _init_weights(self, m: nn.Module):
+        if isinstance(m, nn.Linear):
+            trunc_normal_(m.weight, std=0.02)
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+
+    def init_weights(self):
+        self.apply(self._init_weights)
+
     def __init__(self, model_config):
         super().__init__()
 

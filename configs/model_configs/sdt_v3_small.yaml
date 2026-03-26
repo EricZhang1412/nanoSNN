@@ -1,14 +1,8 @@
 name: sdt_v3
-T: 4
 num_classes: 10
-image_size: 32
-patch_size: 4
 in_channels: 3
-embed_dim: 256
-depth: 4
-num_heads: 8
-mlp_ratio: 4.0
+embed_dim: [32, 64, 128, 192]
+depth: [2, 2, 6, 2]
+num_heads: [1, 1, 8, 8]
+mlp_ratio: [4, 4, 4, 4]
 neuron_type: ilif
-tau: 2.0
-v_threshold: 1.0
-detach_reset: true

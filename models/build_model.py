@@ -63,7 +63,8 @@ class LitVisionSNN(L.LightningModule):
         return expand_static_to_temporal(x, self.T)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self._prepare_input(x)
+        if self.model.__class__.__name__ != "SpikeDrivenTransformerV3":
+            x = self._prepare_input(x)
         logits = self.model(x)
         functional.reset_net(self.model)
         return logits

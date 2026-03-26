@@ -3,12 +3,13 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 from spikingjelly.activation_based import neuron, surrogate
-
+from .ilif_ops import MultiSpike
 
 _NEURON_REGISTRY = {
     "lif": neuron.LIFNode,
     "if": neuron.IFNode,
     "plif": neuron.ParametricLIFNode,
+    "ilif": MultiSpike,
 }
 
 _SURROGATE_REGISTRY = {
@@ -17,12 +18,16 @@ _SURROGATE_REGISTRY = {
 }
 
 
-def build_neuron(model_config, step_mode: str = "m") -> nn.Module:
+def build_neuron(model_config, step_mode: str = "m", v_threshold: float | None = None) -> nn.Module:
     neuron_type = str(getattr(model_config, "neuron_type", "lif")).lower()
     surrogate_type = str(getattr(model_config, "surrogate", "atan")).lower()
     tau = float(getattr(model_config, "tau", 2.0))
-    v_threshold = float(getattr(model_config, "v_threshold", 1.0))
+    if v_threshold is None:
+        v_threshold = float(getattr(model_config, "v_threshold", 1.0))
     detach_reset = bool(getattr(model_config, "detach_reset", True))
+
+    if neuron_type == "ilif":
+        return _NEURON_REGISTRY[neuron_type]()
 
     if surrogate_type not in _SURROGATE_REGISTRY:
         raise ValueError(f"Unknown surrogate: {surrogate_type}")

@@ -21,6 +21,12 @@ from . import spike_driven_transformer  # noqa: F401
 from . import spiking_cnn  # noqa: F401
 
 
+def init_weights(model: nn.Module) -> None:
+    fn = getattr(model, "init_weights", None)
+    if callable(fn):
+        fn()
+
+
 def make_optimizer_groups(model: nn.Module, weight_decay: float):
     decay, no_decay = [], []
     no_decay_types = (nn.Embedding, nn.LayerNorm, nn.BatchNorm2d, nn.BatchNorm1d)
@@ -139,6 +145,7 @@ def build_model(model_config: Any, optimizer_config: Any, train_config: Any, dat
     name = str(model_config.name).lower()
     model_cls = get_model_cls(name)
     model = model_cls(model_config)
+    init_weights(model)
 
     total_params = sum(p.numel() for p in model.parameters())
     rank_zero_info(f"Model: {model.__class__.__name__}  params={total_params:,}")

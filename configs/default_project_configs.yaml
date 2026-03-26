@@ -1,1 +1,1 @@
-output_dir: ./exp/outputs_autoaug_cosine
+output_dir: ./exp/outputs-batch32

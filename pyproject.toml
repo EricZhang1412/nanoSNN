@@ -15,6 +15,7 @@ dependencies = [
     "PyYAML",
     "tensorboard",
     "wandb",
+    "einops",
 ]
 
 [[tool.uv.index]]
@@ -26,3 +27,7 @@ explicit = true
 torch = { index = "pytorch-cu124" }
 torchvision = { index = "pytorch-cu124" }
 torchaudio = { index = "pytorch-cu124" }
+
+[[tool.uv.index]]
+name = "tuna"
+url = "https://pypi.tuna.tsinghua.edu.cn/simple/"

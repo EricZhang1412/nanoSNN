@@ -8,7 +8,7 @@ embed_dim: 256
 depth: 4
 num_heads: 8
 mlp_ratio: 4.0
-neuron_type: lif
+neuron_type: ilif
 tau: 2.0
 v_threshold: 1.0
 detach_reset: true

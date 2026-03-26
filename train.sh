@@ -12,4 +12,4 @@ python train.py \
     --train_config   configs/train_configs/default.yaml \
     --model_config   configs/model_configs/${MODEL}.yaml \
     --optimizer_config configs/optimizer_configs/default.yaml \
-    --resume auto
+    --resume none

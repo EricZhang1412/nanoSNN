@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import torch
 import torch.nn as nn
+from torch.nn.init import trunc_normal_
 from spikingjelly.activation_based import layer
-
+from einops import rearrange, repeat
 from ..common.layers import ConvBNLIF
 from ..common.spike_ops import build_neuron, temporal_mean
 from ..common.registry import register_model
@@ -21,78 +22,115 @@ class SDTv1Attention(nn.Module):
         self.head_dim = dim // num_heads
         self.scale = self.head_dim ** -0.5
 
-        self.q_proj = layer.Linear(dim, dim, bias=False, step_mode="m")
-        self.k_proj = layer.Linear(dim, dim, bias=False, step_mode="m")
-        self.v_proj = layer.Linear(dim, dim, bias=False, step_mode="m")
-        self.out_proj = layer.Linear(dim, dim, bias=False, step_mode="m")
+        
+        # The original implementation uses Conv1x1 to project Q/K/V. see https://github.com/BICLab/Spike-Driven-Transformer/blob/3faa82272eb499e4d56ea77707d4536e7c69a54b/module/ms_conv.py#L105
+        self.dvs = bool(getattr(model_config, "dvs", False))
+        self.layer = int(getattr(model_config, "layer", 0))
 
+        self.pool = nn.MaxPool3d(kernel_size=(1, 3, 3), stride=(1, 1, 1), padding=(0, 1, 1))
+
+        self.shortcut_lif = build_neuron(model_config)
+
+        self.q_conv = nn.Conv2d(dim, dim, kernel_size=1, stride=1, bias=False)
+        self.q_bn = nn.BatchNorm2d(dim)
         self.q_lif = build_neuron(model_config)
+
+        self.k_conv = nn.Conv2d(dim, dim, kernel_size=1, stride=1, bias=False)
+        self.k_bn = nn.BatchNorm2d(dim)
         self.k_lif = build_neuron(model_config)
+
+        self.v_conv = nn.Conv2d(dim, dim, kernel_size=1, stride=1, bias=False)
+        self.v_bn = nn.BatchNorm2d(dim)
         self.v_lif = build_neuron(model_config)
-        self.attn_lif = build_neuron(model_config)
 
-        self.q_bn = nn.BatchNorm1d(dim)
-        self.k_bn = nn.BatchNorm1d(dim)
-        self.v_bn = nn.BatchNorm1d(dim)
-        self.out_bn = nn.BatchNorm1d(dim)
+        self.kv_attn_lif = build_neuron(model_config, v_threshold=0.5)
 
-    def _bn1d(self, x: torch.Tensor, bn: nn.BatchNorm1d) -> torch.Tensor:
-        T, B, N, C = x.shape
-        x = x.reshape(T * B * N, C)
-        x = bn(x)
-        return x.reshape(T, B, N, C)
+        self.proj_conv = nn.Conv2d(dim, dim, kernel_size=1, stride=1)
+        self.proj_bn = nn.BatchNorm2d(dim)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        T, B, N, C = x.shape
-        H, D = self.num_heads, self.head_dim
+        T, B, C, H, W = x.shape
 
-        q = self._bn1d(self.q_proj(x.reshape(T, B * N, C)).reshape(T, B, N, C), self.q_bn)
-        k = self._bn1d(self.k_proj(x.reshape(T, B * N, C)).reshape(T, B, N, C), self.k_bn)
-        v = self._bn1d(self.v_proj(x.reshape(T, B * N, C)).reshape(T, B, N, C), self.v_bn)
+        x = self.shortcut_lif(x)
+        x_for_qkv = x.flatten(0, 1)
 
-        q = self.q_lif(q).reshape(T, B, N, H, D).permute(0, 1, 3, 2, 4)
-        k = self.k_lif(k).reshape(T, B, N, H, D).permute(0, 1, 3, 2, 4)
-        v = self.v_lif(v).reshape(T, B, N, H, D).permute(0, 1, 3, 2, 4)
+        q_conv_out = self.q_conv(x_for_qkv)
+        q_conv_out = self.q_bn(q_conv_out).reshape(T, B, C, H, W).contiguous()
+        q_conv_out = self.q_lif(q_conv_out)
+        q = rearrange(q_conv_out, "T B (h d) H W -> T B h (H W) d", h=self.num_heads)
 
-        # spike-driven: k^T v first (linear complexity)
-        kv = k.transpose(-2, -1) @ v  # [T,B,H,D,D]
-        attn = q @ kv * self.scale    # [T,B,H,N,D]
-        attn = attn.permute(0, 1, 3, 2, 4).reshape(T, B, N, C)
-        attn = self._bn1d(attn, self.out_bn)
-        attn = self.attn_lif(attn)
-        return self._bn1d(self.out_proj(attn.reshape(T, B * N, C)).reshape(T, B, N, C), self.out_bn)
+        k_conv_out = self.k_conv(x_for_qkv)
+        k_conv_out = self.k_bn(k_conv_out).reshape(T, B, C, H, W).contiguous()
+        k_conv_out = self.k_lif(k_conv_out)
+        k = rearrange(k_conv_out, "T B (h d) H W -> T B h (H W) d", h=self.num_heads)
 
+        v_conv_out = self.v_conv(x_for_qkv)
+        v_conv_out = self.v_bn(v_conv_out).reshape(T, B, C, H, W).contiguous()
+        v_conv_out = self.v_lif(v_conv_out)
+        v = rearrange(v_conv_out, "T B (h d) H W -> T B h (H W) d", h=self.num_heads)
+
+        kv = k.mul(v)
+        kv = kv.sum(dim=-2, keepdim=True)
+        kv = self.kv_attn_lif(kv)
+        x = q.mul(kv)
+        if self.dvs:
+            x = self.pool(x)
+
+        x = rearrange(x, "T B h (H W) d -> T B (h d) H W", H=H, W=W)
+        x = self.proj_bn(self.proj_conv(x.flatten(0, 1))).reshape(T, B, C, H, W).contiguous()
+
+        return x
+
+class SDTv1MLP(nn.Module):
+    def __init__(self, dim: int, mlp_ratio: float, model_config):
+        super().__init__()
+        self.fc1_conv = nn.Conv2d(dim, int(dim * mlp_ratio), kernel_size=1, stride=1, bias=False)
+        self.fc1_bn = nn.BatchNorm2d(int(dim * mlp_ratio))
+        self.fc1_lif = build_neuron(model_config)
+
+        self.fc2_conv = nn.Conv2d(int(dim * mlp_ratio), dim, kernel_size=1, stride=1, bias=False)
+        self.fc2_bn = nn.BatchNorm2d(dim)
+        self.fc2_lif = build_neuron(model_config)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        T, B, _, H, W = x.shape
+
+        x = self.fc1_lif(x)
+        x = self.fc1_conv(rearrange(x, "T B C H W -> (T B) C H W"))
+        x = rearrange(self.fc1_bn(x), "(T B) C H W -> T B C H W", T=T, B=B)
+
+        x = self.fc2_lif(x)
+        x = self.fc2_conv(rearrange(x, "T B C H W -> (T B) C H W"))
+        x = rearrange(self.fc2_bn(x), "(T B) C H W -> T B C H W", T=T, B=B)
+
+        return x
 
 class SDTv1Block(nn.Module):
     def __init__(self, dim: int, num_heads: int, mlp_ratio: float, model_config):
         super().__init__()
         self.attn = SDTv1Attention(dim, num_heads, model_config)
-        mlp_hidden = int(dim * mlp_ratio)
-        self.mlp_fc1 = layer.Linear(dim, mlp_hidden, bias=False, step_mode="m")
-        self.mlp_fc2 = layer.Linear(mlp_hidden, dim, bias=False, step_mode="m")
-        self.mlp_lif1 = build_neuron(model_config)
-        self.mlp_lif2 = build_neuron(model_config)
-        self.mlp_bn1 = nn.BatchNorm1d(mlp_hidden)
-        self.mlp_bn2 = nn.BatchNorm1d(dim)
-
-    def _bn1d(self, x: torch.Tensor, bn: nn.BatchNorm1d) -> torch.Tensor:
-        T, B, N, C = x.shape
-        x = x.reshape(T * B * N, C)
-        x = bn(x)
-        return x.reshape(T, B, N, C)
+        self.mlp = SDTv1MLP(dim, mlp_ratio, model_config)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = x + self.attn(x)
-        T, B, N, C = x.shape
-        h = self._bn1d(self.mlp_fc1(x.reshape(T, B * N, C)).reshape(T, B, N, -1), self.mlp_bn1)
-        h = self.mlp_lif1(h)
-        h = self._bn1d(self.mlp_fc2(h.reshape(T, B * N, -1)).reshape(T, B, N, C), self.mlp_bn2)
-        h = self.mlp_lif2(h)
-        return x + h
+        x = x + self.mlp(x)
+        return x
 
 
 @register_model("sdt_v1")
 class SpikeDrivenTransformerV1(nn.Module):
+    def _init_weights(self, m: nn.Module):
+        if isinstance(m, nn.Conv2d):
+            trunc_normal_(m.weight, std=0.02)
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.BatchNorm2d):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+
+    def init_weights(self):
+        self.apply(self._init_weights)
+
     def __init__(self, model_config):
         super().__init__()
         self.T = int(getattr(model_config, "T", 4))
@@ -105,18 +143,38 @@ class SpikeDrivenTransformerV1(nn.Module):
         patch_size = int(getattr(model_config, "patch_size", 4))
         in_channels = int(getattr(model_config, "in_channels", 3))
 
-        from ..spikformer.model import SpikeConvPatchEmbed
-        self.patch_embed = SpikeConvPatchEmbed(in_channels, embed_dim, img_size, patch_size, model_config)
+        from ..common.patch_embed import SDTv1PatchSpliting
+        self.patch_embed = SDTv1PatchSpliting(
+            img_size_h=img_size,
+            img_size_w=img_size,
+            patch_size=patch_size,
+            in_channels=in_channels,
+            embed_dims=embed_dim,
+            model_config=model_config,
+        )
         self.blocks = nn.ModuleList([
             SDTv1Block(embed_dim, num_heads, mlp_ratio, model_config)
             for _ in range(depth)
         ])
+        self.head_lif = build_neuron(model_config)
         self.head = nn.Linear(embed_dim, num_classes)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if x.ndim < 5:
+            x = repeat(x, "B C H W -> T B C H W", T=self.T)
+        elif x.shape[0] == self.T:
+            pass
+        elif x.shape[1] == self.T:
+            x = rearrange(x, "B T C H W -> T B C H W")
+        else:
+            raise ValueError(f"Expected 5D input as [T,B,C,H,W] or [B,T,C,H,W] with T={self.T}, got {tuple(x.shape)}")
+
         x = self.patch_embed(x)
         for blk in self.blocks:
             x = blk(x)
-        x = x.mean(dim=2)
-        x = temporal_mean(x)
-        return self.head(x)
+        x = rearrange(x, "T B C H W -> T B C (H W)").mean(-1)
+        x = self.head_lif(x)
+        # x = temporal_mean(x)
+        x = temporal_mean(self.head(x))
+
+        return x

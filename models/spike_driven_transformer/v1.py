@@ -142,6 +142,7 @@ class SpikeDrivenTransformerV1(nn.Module):
         img_size = int(getattr(model_config, "image_size", 32))
         patch_size = int(getattr(model_config, "patch_size", 4))
         in_channels = int(getattr(model_config, "in_channels", 3))
+        pooling_stat = str(getattr(model_config, "pooling_stat", "0011"))
 
         from ..common.patch_embed import SDTv1PatchSpliting
         self.patch_embed = SDTv1PatchSpliting(
@@ -150,6 +151,7 @@ class SpikeDrivenTransformerV1(nn.Module):
             patch_size=patch_size,
             in_channels=in_channels,
             embed_dims=embed_dim,
+            pooling_stat=pooling_stat,
             model_config=model_config,
         )
         self.blocks = nn.ModuleList([

@@ -8,6 +8,11 @@ embed_dim: 384
 depth: 4
 num_heads: 12
 mlp_ratio: 4.0
+attention_type: quadratic
+psp_gate_on: qk
+psp_tau: 2.0
+psp_gate_fn: sigmoid
+psp_gate_scale: 1.0
 neuron_type: lif
 tau: 2.0
 v_threshold: 1.0

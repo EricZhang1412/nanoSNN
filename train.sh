@@ -5,11 +5,14 @@
 
 MODEL=${1:-spikformer_tiny}
 DATA=${2:-cifar10}
+OPTIMIZER=${3:-sdtv3_cifar10}
+
+
 
 python train.py \
     --project_config configs/default_project_configs.yaml \
     --data_config    configs/data_configs/${DATA}.yaml \
     --train_config   configs/train_configs/default.yaml \
     --model_config   configs/model_configs/${MODEL}.yaml \
-    --optimizer_config configs/optimizer_configs/default.yaml \
-    --resume none
+    --optimizer_config configs/optimizer_configs/${OPTIMIZER}.yaml \
+    --resume auto

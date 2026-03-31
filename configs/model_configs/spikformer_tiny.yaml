@@ -17,3 +17,8 @@ neuron_type: lif
 tau: 2.0
 v_threshold: 1.0
 detach_reset: true
+attention_type: psp_linear
+psp_gate_on: qk
+psp_tau: 2.0
+psp_gate_fn: sigmoid
+psp_gate_scale: 1.0

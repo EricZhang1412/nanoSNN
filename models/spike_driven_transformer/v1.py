@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 import torch
 import torch.nn as nn
 from torch.nn.init import trunc_normal_
@@ -8,6 +10,41 @@ from einops import rearrange, repeat
 from ..common.layers import ConvBNLIF
 from ..common.spike_ops import build_neuron, temporal_mean
 from ..common.registry import register_model
+
+
+class TemporalPSPGate(nn.Module):
+    def __init__(self, tau: float = 2.0, gate_fn: str = "sigmoid", scale: float = 1.0):
+        super().__init__()
+        if tau <= 0:
+            raise ValueError(f"psp_tau must be positive, got {tau}")
+        self.alpha = math.exp(-1.0 / tau)
+        self.gate_fn = gate_fn.lower()
+        self.scale = scale
+        self.state: torch.Tensor | None = None
+
+    def reset(self):
+        self.state = None
+
+    def _make_gate(self, state: torch.Tensor) -> torch.Tensor:
+        if self.gate_fn == "sigmoid":
+            return torch.sigmoid(self.scale * state)
+        raise ValueError(f"Unsupported psp_gate_fn: {self.gate_fn}")
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if x.ndim != 5:
+            raise ValueError(f"TemporalPSPGate expects [T, B, H, N, D], got shape {tuple(x.shape)}")
+
+        state = self.state
+        if state is None or state.shape != x.shape[1:] or state.device != x.device or state.dtype != x.dtype:
+            state = x.new_zeros(x.shape[1:])
+
+        outputs = []
+        for t in range(x.shape[0]):
+            state = self.alpha * state + x[t]
+            outputs.append(x[t] * self._make_gate(state))
+
+        self.state = state.detach()
+        return torch.stack(outputs, dim=0)
 
 
 class SDTv1Attention(nn.Module):
@@ -45,6 +82,19 @@ class SDTv1Attention(nn.Module):
 
         self.kv_attn_lif = build_neuron(model_config, v_threshold=0.5)
 
+        gate_on = str(getattr(model_config, "psp_gate_on", "none")).lower()
+        if gate_on == "off":
+            gate_on = "none"
+        if gate_on not in {"qk", "q", "k", "none"}:
+            raise ValueError(f"Unsupported psp_gate_on: {gate_on}")
+
+        gate_tau = float(getattr(model_config, "psp_tau", 2.0))
+        gate_fn = str(getattr(model_config, "psp_gate_fn", "sigmoid")).lower()
+        gate_scale = float(getattr(model_config, "psp_gate_scale", 1.0))
+
+        self.q_gate = TemporalPSPGate(gate_tau, gate_fn, gate_scale) if gate_on in {"qk", "q"} else None
+        self.k_gate = TemporalPSPGate(gate_tau, gate_fn, gate_scale) if gate_on in {"qk", "k"} else None
+
         self.proj_conv = nn.Conv2d(dim, dim, kernel_size=1, stride=1)
         self.proj_bn = nn.BatchNorm2d(dim)
 
@@ -58,11 +108,15 @@ class SDTv1Attention(nn.Module):
         q_conv_out = self.q_bn(q_conv_out).reshape(T, B, C, H, W).contiguous()
         q_conv_out = self.q_lif(q_conv_out)
         q = rearrange(q_conv_out, "T B (h d) H W -> T B h (H W) d", h=self.num_heads)
+        if self.q_gate is not None:
+            q = self.q_gate(q)
 
         k_conv_out = self.k_conv(x_for_qkv)
         k_conv_out = self.k_bn(k_conv_out).reshape(T, B, C, H, W).contiguous()
         k_conv_out = self.k_lif(k_conv_out)
         k = rearrange(k_conv_out, "T B (h d) H W -> T B h (H W) d", h=self.num_heads)
+        if self.k_gate is not None:
+            k = self.k_gate(k)
 
         v_conv_out = self.v_conv(x_for_qkv)
         v_conv_out = self.v_bn(v_conv_out).reshape(T, B, C, H, W).contiguous()

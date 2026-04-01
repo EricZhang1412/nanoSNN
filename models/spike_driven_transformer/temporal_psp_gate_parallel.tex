@@ -1,0 +1,115 @@
+\section{TemporalPSPGate 的 true-PSP GPU 实现}
+
+\subsection{Problem setup}
+在 SDT v1 的 Q/K 分支中，设 `Conv+BN` 后的预激活为
+\[
+z_t \in \mathbb{R}^{B \times H \times N \times D}.
+\]
+新实现不再对已经输出的 $q/k$ 额外做一层外部时间 trace，而是从同一个预激活 $z_t$ 分成两条并行路径：
+\begin{itemize}
+  \item \textbf{spike path}: 送入标准 spike neuron，得到
+  \[
+  q_t^{\mathrm{spike}},\; k_t^{\mathrm{spike}};
+  \]
+  \item \textbf{PSP path}: 送入 `output_mode="psp"` 的 neuron readout，直接读取其膜电位轨迹
+  \[
+  q_t^{\mathrm{psp}},\; k_t^{\mathrm{psp}}.
+  \]
+\end{itemize}
+二者都 reshape 到统一张量形状
+\[
+[T, B, H, N, D].
+\]
+
+\subsection{Why the old gate was not true PSP}
+旧版 `TemporalPSPGate` 的控制信号来自外部递推
+\[
+s_t = \alpha s_{t-1} + x_t,
+\qquad
+y_t = x_t \odot \sigma(\beta s_t),
+\]
+其中 $x_t$ 已经是 `q_lif/k_lif` 输出后的张量。这意味着旧 gate 本质上是对 `q/k` 再做一层独立的指数 trace，而不是直接读取神经元内部的 PSP / membrane potential。
+
+因此旧版虽然是 PSP-like trace gate，但不是真正意义上的 PSP readout gate。
+
+\subsection{True PSP readout path}
+仓库中的真实 PSP 来源于 `_PSPReadout` 与 `build_neuron(..., output_mode="psp")`。在 multi-step 模式下，该 readout 直接返回底层 neuron 的
+\[
+v_{seq},
+\]
+即整个时间序列的 membrane trace。于是对于 Q/K 分支，同一个 `Conv+BN` 输出 $z_t$ 被并联送入：
+\begin{align}
+q_t^{\mathrm{spike}} &= \mathrm{Neuron}_{\mathrm{spike}}(z_t),\\
+q_t^{\mathrm{psp}} &= \mathrm{Neuron}_{\mathrm{psp\;readout}}(z_t),
+\end{align}
+K 分支同理。
+
+这里的 `psp` 不再是外部手工构造的递推状态，而是神经元内部真实膜电位轨迹的读出。
+
+\subsection{Gate definition}
+新 gate 的职责仅仅是：用真实 PSP 去调制 spike 表示。定义
+\[
+g_t^q = \sigma(\beta q_t^{\mathrm{psp}}),
+\qquad
+\tilde q_t = q_t^{\mathrm{spike}} \odot g_t^q,
+\]
+以及
+\[
+g_t^k = \sigma(\beta k_t^{\mathrm{psp}}),
+\qquad
+\tilde k_t = k_t^{\mathrm{spike}} \odot g_t^k.
+\]
+其中 $\beta = \texttt{psp\_gate\_scale}$。
+
+因此新的 `TemporalPSPGate` 不再负责生成时间状态，只负责执行
+\[
+\mathrm{gate}(x^{\mathrm{spike}}, x^{\mathrm{psp}})
+= x^{\mathrm{spike}} \odot \sigma(\beta x^{\mathrm{psp}}).
+\]
+
+\subsection{Implementation mapping}
+对应到实现时，Q/K 分支共享同一个 `Conv+BN` 输出，再分成两路：
+\begin{enumerate}
+  \item `Conv+BN -> spike neuron` 生成 attention 主路径使用的 spike Q/K；
+  \item `Conv+BN -> PSP readout neuron` 生成 gate 控制信号所需的真实 PSP；
+  \item `TemporalPSPGate` 接收 `(spike, psp)` 两个张量，输出 gated spike；
+  \item attention 主干仍然使用 gated spike Q/K 与原有的 V 路径做后续乘加。
+\end{enumerate}
+
+这保证了：
+\begin{itemize}
+  \item attention 主值路径仍保留 spike 语义；
+  \item gate 控制信号真正来自 neuron membrane trace；
+  \item 不再引入与 neuron 本身并列的第二套外部时间系统。
+\end{itemize}
+
+\subsection{GPU implementation}
+在 true-PSP 方案下，时序动力学由现有 neuron 路径负责，因此 GPU kernel 不重写 PSP/membrane dynamics。本轮 GPU 化仅下沉下列逐元素运算：
+\[
+y = x^{\mathrm{spike}} \odot \sigma(\beta x^{\mathrm{psp}}).
+\]
+这非常适合用 Triton 实现 fused kernel，因为它只包含：
+\begin{itemize}
+  \item 读取 `spike` 张量；
+  \item 读取 `psp` 张量；
+  \item 计算 `sigmoid(scale * psp)`；
+  \item 与 `spike` 相乘并写回输出。
+\end{itemize}
+
+因此 GPU 加速的职责边界非常清晰：
+\begin{itemize}
+  \item neuron 的真实 PSP 生成：仍由现有 PyTorch / SpikingJelly 路径完成；
+  \item true-PSP gate 的逐元素融合：由 Triton kernel 完成；
+  \item fallback 路径：使用普通 PyTorch 张量表达式完成同样的逐元素门控。
+\end{itemize}
+
+\subsection{Semantic difference from trace gate}
+新方案与旧 trace gate 的本质区别在于：
+\begin{enumerate}
+  \item 旧版 gate 的“PSP”来自外部人为定义的递推状态；
+  \item 新版 gate 的 `psp` 来自 neuron 内部 membrane trace 的直接 readout；
+  \item 旧版需要单独的 `psp\_tau` 来定义外部 trace 时间常数；
+  \item 新版不再引入独立外部时间常数，PSP 的时间特性由 neuron 自身的动力学参数决定。
+\end{enumerate}
+
+因此，true-PSP gate 的语义更加严格，也更符合“用真实 PSP 调制 spike attention”的目标。

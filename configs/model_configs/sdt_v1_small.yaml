@@ -13,6 +13,7 @@ psp_gate_on: none
 psp_tau: 2.0
 psp_gate_fn: sigmoid
 psp_gate_scale: 1.0
+psp_gate_backend: auto
 neuron_type: lif
 tau: 2.0
 v_threshold: 1.0

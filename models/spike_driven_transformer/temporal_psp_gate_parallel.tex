@@ -1,4 +1,4 @@
-\section{TemporalPSPGate 的 true-PSP GPU 实现}
+\section{TemporalPSPGate 的 pspgate GPU 实现}
 
 \subsection{Problem setup}
 在 SDT v1 的 Q/K 分支中，设 `Conv+BN` 后的预激活为
@@ -21,7 +21,7 @@ z_t \in \mathbb{R}^{B \times H \times N \times D}.
 [T, B, H, N, D].
 \]
 
-\subsection{Why the old gate was not true PSP}
+\subsection{旧版为何不是 pspgate}
 旧版 `TemporalPSPGate` 的控制信号来自外部递推
 \[
 s_t = \alpha s_{t-1} + x_t,
@@ -84,7 +84,7 @@ g_t^k = \sigma(\beta k_t^{\mathrm{psp}}),
 \end{itemize}
 
 \subsection{GPU implementation}
-在 true-PSP 方案下，时序动力学由现有 neuron 路径负责，因此 GPU kernel 不重写 PSP/membrane dynamics。本轮 GPU 化仅下沉下列逐元素运算：
+在 pspgate 方案下，时序动力学由现有 neuron 路径负责，因此 GPU kernel 不重写 PSP/membrane dynamics。本轮 GPU 化仅下沉下列逐元素运算：
 \[
 y = x^{\mathrm{spike}} \odot \sigma(\beta x^{\mathrm{psp}}).
 \]
@@ -99,7 +99,7 @@ y = x^{\mathrm{spike}} \odot \sigma(\beta x^{\mathrm{psp}}).
 因此 GPU 加速的职责边界非常清晰：
 \begin{itemize}
   \item neuron 的真实 PSP 生成：仍由现有 PyTorch / SpikingJelly 路径完成；
-  \item true-PSP gate 的逐元素融合：由 Triton kernel 完成；
+  \item pspgate 的逐元素融合：由 Triton kernel 完成；
   \item fallback 路径：使用普通 PyTorch 张量表达式完成同样的逐元素门控。
 \end{itemize}
 
@@ -112,4 +112,4 @@ y = x^{\mathrm{spike}} \odot \sigma(\beta x^{\mathrm{psp}}).
   \item 新版不再引入独立外部时间常数，PSP 的时间特性由 neuron 自身的动力学参数决定。
 \end{enumerate}
 
-因此，true-PSP gate 的语义更加严格，也更符合“用真实 PSP 调制 spike attention”的目标。
+因此，pspgate 的语义更加严格，也更符合“用真实 PSP 调制 spike attention”的目标。

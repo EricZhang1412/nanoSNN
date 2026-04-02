@@ -8,7 +8,7 @@ from torch.nn.init import trunc_normal_
 from spikingjelly.activation_based import layer
 from einops import rearrange, repeat
 from ..common.layers import ConvBNLIF
-from ..common.psp_ops import true_psp_gate_apply
+from ..common.psp_ops import pspgate_apply
 from ..common.spike_ops import build_neuron, temporal_mean
 from ..common.registry import register_model
 
@@ -29,7 +29,7 @@ class TemporalPSPGate(nn.Module):
             raise ValueError(f"TemporalPSPGate expects matching shapes, got spike={tuple(spike.shape)} psp={tuple(psp.shape)}")
         if self.gate_fn != "sigmoid":
             raise ValueError(f"Unsupported psp_gate_fn: {self.gate_fn}")
-        return true_psp_gate_apply(spike, psp, scale=self.scale, backend=self.backend)
+        return pspgate_apply(spike, psp, scale=self.scale, backend=self.backend)
 
 
 class SDTv1Attention(nn.Module):

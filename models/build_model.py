@@ -7,6 +7,7 @@ from typing import Any
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from timm.data.mixup import Mixup
 import lightning as L
 from lightning.pytorch.utilities.rank_zero import rank_zero_info
 from spikingjelly.activation_based import functional
@@ -19,6 +20,7 @@ from utils import accuracy_at_k
 from . import spikformer  # noqa: F401
 from . import spike_driven_transformer  # noqa: F401
 from . import spiking_cnn  # noqa: F401
+from . import mem_gated_attention  # noqa: F401
 
 
 def init_weights(model: nn.Module) -> None:
@@ -55,6 +57,22 @@ class LitVisionSNN(L.LightningModule):
         self._is_event_input = bool(getattr(data_config, "is_event", False))
         self._step_start_time = None
 
+        mixup_alpha = float(getattr(data_config, "mixup_alpha", 0.0))
+        cutmix_alpha = float(getattr(data_config, "cutmix_alpha", 0.0))
+        label_smoothing = float(getattr(data_config, "label_smoothing", 0.0))
+        num_classes = int(getattr(data_config, "num_classes", 10))
+
+        if mixup_alpha > 0 or cutmix_alpha > 0:
+            self.mixup_fn = Mixup(
+                mixup_alpha=mixup_alpha,
+                cutmix_alpha=cutmix_alpha,
+                label_smoothing=label_smoothing,
+                num_classes=num_classes,
+            )
+        else:
+            self.mixup_fn = None
+        self.label_smoothing = label_smoothing
+
     def _prepare_input(self, x: torch.Tensor) -> torch.Tensor:
         if self._is_event_input:
             # already [T, B, C, H, W]
@@ -87,8 +105,21 @@ class LitVisionSNN(L.LightningModule):
             self.log(f"{split}/top5", accs["top5"], on_step=False, on_epoch=True, sync_dist=sync)
         return loss
 
+    # def training_step(self, batch, batch_idx: int):
+    #     return self._shared_step(batch, "train")
     def training_step(self, batch, batch_idx: int):
-        return self._shared_step(batch, "train")
+        x, y = batch
+        if self.mixup_fn is not None:
+            x, y = self.mixup_fn(x, y)  # y 变成 soft label
+        logits = self(x)
+        loss = F.cross_entropy(logits, y, label_smoothing=self.label_smoothing if self.mixup_fn is None else 0.0)
+        # mixup_fn 内部已处理 label_smoothing，所以 mixup 开启时不重复
+        self.log("train/loss", loss, prog_bar=True, on_step=True, on_epoch=True)
+        # mixup 后 y 是 soft label，不能算 top-k accuracy，跳过或用 argmax
+        if y.ndim == 1:
+            accs = accuracy_at_k(logits, y, topk=(1,))
+            self.log("train/top1", accs["top1"], prog_bar=True, on_step=False, on_epoch=True)
+        return loss
 
     def validation_step(self, batch, batch_idx: int):
         self._shared_step(batch, "val")

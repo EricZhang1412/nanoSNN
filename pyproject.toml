@@ -16,6 +16,7 @@ dependencies = [
     "tensorboard",
     "wandb",
     "einops",
+    "setuptools<81",
 ]
 
 [[tool.uv.index]]

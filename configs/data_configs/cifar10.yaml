@@ -1,5 +1,5 @@
 name: cifar10
-root: /data/maluzhang-folder/datasets/CIFAR10
+root: /data2/dataset/cifar10
 num_classes: 10
 image_size: 32
 in_channels: 3
@@ -7,11 +7,14 @@ is_event: false
 num_workers: 4
 pin_memory: true
 # timm-style augmentation knobs (all optional, defaults match timm)
-auto_augment: rand-m9-n2-mstd0.5   # e.g. rand-*, augmix-*, v0, original
+auto_augment: rand-m14-n2-mstd0.5   # e.g. rand-*, augmix-*, v0, original
 hflip: 0.5
 vflip: 0.0
 color_jitter: 0.4                     # disabled automatically when auto_augment is set
-re_prob: 0.0
+re_prob: 0.25
 re_mode: const
 re_count: 1
 interpolation: bilinear
+mixup_alpha: 0.8
+cutmix_alpha: 1.0
+label_smoothing: 0.1

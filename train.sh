@@ -3,9 +3,9 @@
 # Usage: bash train.sh [model_config] [data_config]
 # Example: bash train.sh spikformer_tiny cifar10
 
-MODEL=${1:-spikformer_tiny}
+MODEL=${1:-mem_gated_attn_tiny}
 DATA=${2:-cifar10}
-OPTIMIZER=${3:-sdtv3_cifar10}
+OPTIMIZER=${3:-mem_gated_attn_tiny_cifar10}
 
 
 
@@ -15,4 +15,4 @@ python train.py \
     --train_config   configs/train_configs/default.yaml \
     --model_config   configs/model_configs/${MODEL}.yaml \
     --optimizer_config configs/optimizer_configs/${OPTIMIZER}.yaml \
-    --resume auto
+    --resume none

@@ -1,1 +1,1 @@
-output_dir: ./exp/outputs-batch32
+output_dir: ./exp/seed42_bf16-mixed-outputs-batch240-label-smoothing-0.1_ema

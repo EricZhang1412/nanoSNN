@@ -15,9 +15,9 @@ from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
 from utils.load_config import load_config
 from utils.resume import register_checkpoint_safe_globals, resolve_resume_ckpt
 from utils.callbacks import EpochTimerCallback
+
 from data import VisionDataModule
 from models.build_model import build_model
-
 
 def parser_args():
     import argparse

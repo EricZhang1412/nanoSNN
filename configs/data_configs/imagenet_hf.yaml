@@ -6,3 +6,9 @@ in_channels: 3
 is_event: false
 num_workers: 8
 pin_memory: true
+auto_augment: rand-m9-mstd0.5-inc1
+re_prob: 0.25
+color_jitter: 0.4
+mixup_alpha: 0.5
+cutmix_alpha: 0.5
+mixup_off_epoch: 200

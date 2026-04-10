@@ -72,6 +72,7 @@ class LitVisionSNN(L.LightningModule):
         else:
             self.mixup_fn = None
         self.label_smoothing = label_smoothing
+        self.mixup_off_epoch = getattr(data_config, 'mixup_off_epoch', 0)
 
     def _prepare_input(self, x: torch.Tensor) -> torch.Tensor:
         if self._is_event_input:
@@ -131,12 +132,23 @@ class LitVisionSNN(L.LightningModule):
         if self.trainer.is_global_zero:
             self._step_start_time = time.perf_counter()
 
+        if self.mixup_off_epoch and self.mixup_fn is not None:
+            self.mixup_fn.mixup_enabled = self.current_epoch < self.mixup_off_epoch
+
     def on_train_batch_end(self, outputs, batch, batch_idx):
         if self._step_start_time is not None and self.trainer.is_global_zero:
             elapsed = time.perf_counter() - self._step_start_time
             x, _ = batch
             imgs = x.shape[0] if x.ndim == 4 else x.shape[1]
             self.log("train/imgs_per_sec", imgs / elapsed, on_step=True, sync_dist=False)
+        
+        # Log gate firing rates
+        if hasattr(self.model, "blocks"):
+            for i, blk in enumerate(self.model.blocks):
+                if hasattr(blk.attn, "decay_gate"):
+                    dr = blk.attn.decay_gate.last_firing_rate
+                    if dr is not None:
+                        self.log(f"gate/block{i}_decay_fr", dr, on_step=True, on_epoch=False)
 
     def configure_optimizers(self):
         lr = float(getattr(self.optimizer_config, "lr", 1e-3))

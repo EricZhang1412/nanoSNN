@@ -10,8 +10,6 @@ No floating-point multiplication in the attention mechanism.
 
 Training uses the parallel (causal weighted sum) form for GPU efficiency.
 Inference uses the sequential (spike-driven recurrent) form for neuromorphic hw.
-
-Reference: analysis_snn_linear_rnn.tex, Sections 8-10.
 """
 
 from __future__ import annotations
@@ -70,6 +68,8 @@ class GateLIF(nn.Module):
         self.surrogate = surrogate.ATan()
         self.channels = channels
 
+        self.last_firing_rate = None  # [Monitor]
+
     def forward(self, x):
         # x: [T, ..., C]，手动展开时间步（per-channel tau 无法用 SJ fused kernel）
         tau = 1.0 / self.w.sigmoid()           # [C]
@@ -82,7 +82,10 @@ class GateLIF(nn.Module):
             spike = self.surrogate(v - self.v_threshold)
             v = v - spike * self.v_threshold   # soft reset
             spikes.append(spike)
-        return torch.stack(spikes, dim=0)
+
+        out = torch.stack(spikes, dim=0)
+        self.last_firing_rate = out.detach().mean()  # [Monitor]
+        return out
 
 
 # ---------------------------------------------------------------------------
@@ -141,9 +144,30 @@ class SDBGLAttention(nn.Module):
 
         # --- SD-BGLA gate neurons ---
         # Decay gate: one PLIF per channel (d_k channels per head)
-        self.decay_gate = GateLIF(self.head_dim, v_threshold=1.0)
-        # Write gate: one PLIF per head (scalar gate)
-        self.write_gate = GateLIF(1, v_threshold=0.8)
+        decay_gate_lif_tau_min = float(getattr(model_config, "decay_gate_lif_tau_min", 1.5))
+        decay_gate_lif_tau_max = float(getattr(model_config, "decay_gate_lif_tau_max", 8.0))
+        
+        self.decay_proj = nn.Linear(self.head_dim, self.head_dim, bias=True)
+        self.decay_bn = nn.BatchNorm1d(self.head_dim)
+        self.decay_gate = GateLIF(
+            self.head_dim, 
+            tau_min=decay_gate_lif_tau_min, 
+            tau_max=decay_gate_lif_tau_max, 
+            v_threshold=1.0
+        )
+        # # Write gate: one PLIF per head (scalar gate)
+        # write_gate_lif_tau_min = float(getattr(model_config, "write_gate_lif_tau_min", 1.5))
+        # write_gate_lif_tau_max = float(getattr(model_config, "write_gate_lif_tau_max", 8.0))
+        
+        # self.write_proj = nn.Linear(1, self.head_dim, bias=False)
+        # self.write_bn = nn.BatchNorm1d(self.head_dim)
+        # self.write_gate = GateLIF(
+        #     self.head_dim, 
+        #     tau_min=write_gate_lif_tau_min, 
+        #     tau_max=write_gate_lif_tau_max, 
+        #     v_threshold=0.8
+        # )
+        # self.write_pool = nn.AdaptiveAvgPool1d(1)  # head_dim -> 1
 
         # Precompute decay power table: table[m] = (1-δ)^m
         max_T = 32  # generous upper bound
@@ -197,31 +221,48 @@ class SDBGLAttention(nn.Module):
         T, B, H, N, D = k.shape
 
         # Decay gate input: pooled membrane potential, mean over N
-        u_bar = u_k.mean(dim=3)  # [T, B, H, D]
-        s_gamma = self.decay_gate(u_bar)  # [T, B, H, D], binary
+        # u_bar = u_k.mean(dim=3)  # [T, B, H, D]
+        # u_bar = self.decay_proj(u_bar)
+        
+        # s_gamma = self.decay_gate(u_bar)  # [T, B, H, D], binary
+        u_bar = u_k.mean(dim=3)                          # [T, B, H, D]
+        u_bar = rearrange(u_bar, "T B H D -> (T B H) D")
+        u_bar = self.decay_proj(u_bar)
+        u_bar = self.decay_bn(u_bar)
+        u_bar = rearrange(u_bar, "(T B H) D -> T B H D", T=T, B=B, H=H)
+        s_gamma = self.decay_gate(u_bar)
 
-        # Write gate input: scalar pooled spike rate
-        r = k.float().mean(dim=(3, 4), keepdim=True)  # [T, B, H, 1, 1]
-        r = r.squeeze(-1)  # [T, B, H, 1]
-        s_beta = self.write_gate(r)  # [T, B, H, 1], binary
+        # # Write gate input: scalar pooled spike rate
+        # # r = k.float().mean(dim=(3, 4), keepdim=True)  # [T, B, H, 1, 1]
+        # # r = r.squeeze(-1)  # [T, B, H, 1]
+        # # r = self.write_proj(r)  
+        # # s_beta = self.write_gate(r)  # [T, B, H, 1], binary
+        # r = k.float().mean(dim=(3, 4), keepdim=True)      # [T, B, H, 1, 1]
+        # r = r.squeeze(-1)                                  # [T, B, H, 1]
+        # r = rearrange(r, "T B H 1 -> (T B H) 1")
+        # r = self.write_proj(r)                             # (TBH, D)
+        # r = self.write_bn(r)
+        # r = rearrange(r, "(T B H) D -> T B H D", T=T, B=B, H=H)
+        # s_beta_full = self.write_gate(r)                   # [T, B, H, D]
+        # s_beta = s_beta_full.mean(dim=-1, keepdim=True)    # [T, B, H, 1]
+        # s_beta = (s_beta > 0.5).float()                    # 重新二值化
 
-        return s_gamma, s_beta
+        # return s_gamma, s_beta
+        return s_gamma
 
-    def _build_causal_matrix(self, s_gamma: torch.Tensor, s_beta: torch.Tensor):
+    def _build_causal_matrix(self, s_gamma: torch.Tensor):
         """Build the T×T causal temporal attention matrix L for parallel computation.
 
-        L[t, τ, j] = s_beta[τ] · (1-δ)^{count of s_gamma[j] from τ+1 to t}
+        L[t, τ, j] = s[τ] · (1-δ)^{count of s_gamma[j] from τ+1 to t}
 
         Args:
             s_gamma: [T, B, H, D]  (binary decay spikes)
-            s_beta:  [T, B, H, 1]  (binary write spikes)
         Returns:
             L: [B, H, D, T, T]  (causal matrix, lower-triangular)
         """
         T = s_gamma.shape[0]
         # s_gamma: [T, B, H, D] -> [B, H, D, T]
         sg = rearrange(s_gamma, "T B H D -> B H D T").float()
-        sb = rearrange(s_beta, "T B H 1 -> B H T").float()
 
         # Compute cumulative spike counts: c[τ, t] = sum of s_gamma from τ+1 to t
         # For each pair (τ, t) with τ ≤ t
@@ -247,10 +288,6 @@ class SDBGLAttention(nn.Module):
         # Apply causal mask
         L = L * causal_mask  # [B, H, D, T, T]
 
-        # Apply write gate: mask column τ by s_beta[τ]
-        # sb: [B, H, T] -> [B, H, 1, 1, T]  (broadcast over D and t)
-        L = L * sb[:, :, None, None, :]
-
         return L
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -267,8 +304,8 @@ class SDBGLAttention(nn.Module):
         q, k, v, u_k = self._get_qkv(x)  # all [T, B, H, N, D]
 
         # Step 2: gate spikes
-        s_gamma, s_beta = self._compute_gate_spikes(k, u_k)
-        # s_gamma: [T, B, H, D],  s_beta: [T, B, H, 1]
+        s_gamma = self._compute_gate_spikes(k, u_k)
+        # s_gamma: [T, B, H, D]
 
         # Step 3: spatial KV aggregation for each timestep (addition-only)
         # KV_t = k_t^T @ v_t,  k:[B,H,N,D] -> [B,H,D,N], v:[B,H,N,D]
@@ -278,7 +315,7 @@ class SDBGLAttention(nn.Module):
 
         # Step 4: parallel temporal attention via causal matrix L
         # L: [B, H, D_k, T, T]
-        L = self._build_causal_matrix(s_gamma, s_beta)
+        L = self._build_causal_matrix(s_gamma)
 
         # S_stack[t, j] = sum_τ L[t, τ, j] * KV[τ, j]
         # where KV[τ, j] is the j-th row of KV_τ (a D_v-dim vector)
@@ -410,11 +447,17 @@ class SDBGLABlock(nn.Module):
         self.attn = SDBGLAttention(dim, num_heads, shift_k=shift_k,
                                    model_config=model_config)
         self.mlp = SDBGLAMlp(dim, mlp_ratio, model_config=model_config)
+        # LayerScale: per-channel learnable scalar
+        attn_layer_scale_init_values = getattr(model_config, "attn_layer_scale_init_values", 0.1)
+        mlp_layer_scale_init_values = getattr(model_config, "mlp_layer_scale_init_values", 0.1)
+        
+        self.gamma_attn = nn.Parameter(attn_layer_scale_init_values * torch.ones(dim))
+        self.gamma_mlp = nn.Parameter(mlp_layer_scale_init_values * torch.ones(dim))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: [T, B, N, C]
-        x = x + self.attn(x)
-        x = x + self.mlp(x)
+        x = x + self.gamma_attn * self.attn(x)
+        x = x + self.gamma_mlp * self.mlp(x)
         return x
 
 
@@ -467,15 +510,15 @@ class SDBGLAFormer(nn.Module):
             nn.init.zeros_(m.bias)
 
     def init_weights(self):
-        # 1. 通用权重初始化
         self.apply(self._init_weights)
 
-        # 2. head 小初始化（apply 里已经处理 Linear，这里单独覆盖 head）
         nn.init.normal_(self.head.weight, std=0.01)
         nn.init.zeros_(self.head.bias)
 
-        # 3. decay_gate.w 已在 GateLIF.__init__ 里 linspace 初始化，无需重复
-        # 4. write_gate.v_threshold 已在构造时传入 0.8，无需重复
+        # zero init output projection
+        for blk in self.blocks:
+            nn.init.zeros_(blk.attn.proj_linear.weight)
+            nn.init.zeros_(blk.mlp.fc2_linear.weight)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: [T, B, C, H, W]

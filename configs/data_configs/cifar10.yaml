@@ -7,14 +7,15 @@ is_event: false
 num_workers: 4
 pin_memory: true
 # timm-style augmentation knobs (all optional, defaults match timm)
-auto_augment: rand-m14-n2-mstd0.5   # e.g. rand-*, augmix-*, v0, original
+auto_augment: rand-m9-n1-mstd0.4-inc1   # e.g. rand-*, augmix-*, v0, original
 hflip: 0.5
 vflip: 0.0
-color_jitter: 0.4                     # disabled automatically when auto_augment is set
-re_prob: 0.25
+color_jitter: 0.0                     # disabled automatically when auto_augment is set
+re_prob: 0.4
 re_mode: const
 re_count: 1
-interpolation: bilinear
-mixup_alpha: 0.8
-cutmix_alpha: 1.0
+interpolation: bicubic
+mixup_alpha: 0.5
+cutmix_alpha: 0.5
+mixup_off_epoch: 400
 label_smoothing: 0.1

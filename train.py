@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import datetime
 import functools
+import yaml
 
 import torch
 import lightning as L
@@ -36,6 +37,12 @@ def parser_args():
 def is_global_zero_env():
     return int(os.environ.get("RANK", "0")) == 0
 
+def _namespace_to_dict(value):
+    if isinstance(value, list):
+        return [_namespace_to_dict(item) for item in value]
+    if hasattr(value, "__dict__"):
+        return {key: _namespace_to_dict(val) for key, val in vars(value).items()}
+    return value
 
 def train(args):
     rank_zero_info("########## nanoSNN training ##########")
@@ -85,6 +92,21 @@ def train(args):
     default_root_dir = getattr(project_config, "output_dir", "./exp/outputs")
     ckpt_dir = args.ckpt_dir or os.path.join(default_root_dir, "checkpoints", exp_name)
     os.makedirs(ckpt_dir, exist_ok=True)
+
+    # save configs
+    if is_global_zero_env():
+        os.makedirs(default_root_dir, exist_ok=True)
+        merged_config_path = os.path.join(default_root_dir, f"{exp_name}_{timestamp}_config.yaml")
+        merged_config = {
+            "project_config": _namespace_to_dict(project_config),
+            "data_config": _namespace_to_dict(data_config),
+            "train_config": _namespace_to_dict(train_config),
+            "model_config": _namespace_to_dict(model_config),
+            "optimizer_config": _namespace_to_dict(optimizer_config),
+        }
+        with open(merged_config_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(merged_config, f, sort_keys=False, allow_unicode=True)
+        rank_zero_info(f"Saved merged config: {merged_config_path}")
 
     # logger
     if world_size == 1 and is_global_zero_env():

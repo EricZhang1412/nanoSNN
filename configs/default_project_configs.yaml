@@ -1,1 +1,1 @@
-output_dir: ./exp/seed42_bf16-mixed-outputs-batch240-label-smoothing-0.1_ema
+output_dir: ./exp/seed42_bf16-mixed-outputs-batch224-label-smoothing-0.1_layerscale0.01_800ep_gatedlif-v2.6

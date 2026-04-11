@@ -15,11 +15,15 @@ Inference uses the sequential (spike-driven recurrent) form for neuromorphic hw.
 from __future__ import annotations
 
 from typing import Optional
+import math
 
 import torch
 import torch.nn as nn
 from einops import rearrange
 from spikingjelly.activation_based import neuron, surrogate
+from spikingjelly.activation_based.neuron import BaseNode
+
+from torch.utils.checkpoint import checkpoint
 
 from ..common.spike_ops import build_neuron, temporal_mean
 from ..common.registry import register_model
@@ -40,51 +44,41 @@ def _bn1d(x: torch.Tensor, bn: nn.BatchNorm1d) -> torch.Tensor:
 # ---------------------------------------------------------------------------
 # Gate LIF Neuron — produces binary gate spikes
 # ---------------------------------------------------------------------------
-
-class GateLIF(nn.Module):
-    """Parametric LIF gate neuron (thin wrapper over SpikingJelly's
-    ``ParametricLIFNode`` in multi-step mode).
-
-    Produces binary spikes s^(t) ∈ {0,1} whose firing rate encodes the
-    continuous gate value.  Uses SpikingJelly's fused multi-step forward
-    (``step_mode='m'``) so the temporal loop runs inside SJ's optimized
-    kernel instead of a Python for-loop.
-
-    Notes
-    -----
-    SpikingJelly's ``ParametricLIFNode`` uses a single shared learnable
-    membrane time constant (parameterized as ``tau = 1 / sigmoid(w)``)
-    and a fixed scalar threshold. This is a minor simplification from the
-    previous per-channel custom implementation, but it gives access to
-    SJ's fused (and optionally CuPy-accelerated) multi-step backend.
+class GateLIFNode(BaseNode):
+    """Per-channel learnable tau 的 Parametric LIF。
+    
+    基于 SpikingJelly 的 BaseNode，只需实现 neuronal_charge()。
     """
-    def __init__(self, channels, tau_min=1.5, tau_max=8.0, v_threshold=1.0):
-        super().__init__()
-        # per-channel 可学习 tau
-        taus = torch.linspace(tau_min, tau_max, channels)
-        w_init = torch.log(1.0 / taus / (1.0 - 1.0 / taus))
-        self.w = nn.Parameter(w_init)          # [C]，per-channel
-        self.v_threshold = v_threshold
-        self.surrogate = surrogate.ATan()
-        self.channels = channels
 
-        self.last_firing_rate = None  # [Monitor]
+    def __init__(self, channels: int, init_tau: float = 2.0,
+                 v_threshold: float = 1.0, v_reset: float = 0.0,
+                 surrogate_function=None, detach_reset=True,
+                 step_mode='m', backend='torch'):
+        super().__init__(
+            v_threshold=v_threshold,
+            v_reset=v_reset,
+            surrogate_function=surrogate_function or surrogate.ATan(),
+            detach_reset=detach_reset,
+            step_mode=step_mode,
+            backend=backend,
+        )
+        # per-channel 可学习参数，w → tau = 1 / sigmoid(w)
+        init_w = -math.log(init_tau - 1.0)  # sigmoid(w) = 1/tau
+        self.w = nn.Parameter(torch.full((channels,), init_w))
+        self.last_firing_rate = None
 
-    def forward(self, x):
-        # x: [T, ..., C]，手动展开时间步（per-channel tau 无法用 SJ fused kernel）
-        tau = 1.0 / self.w.sigmoid()           # [C]
-        decay = 1.0 - 1.0 / tau               # [C]
-        T = x.shape[0]
-        v = torch.zeros_like(x[0])
-        spikes = []
-        for t in range(T):
-            v = decay * v + x[t]
-            spike = self.surrogate(v - self.v_threshold)
-            v = v - spike * self.v_threshold   # soft reset
-            spikes.append(spike)
+    @property
+    def supported_backends(self):
+        return ('torch',)
 
-        out = torch.stack(spikes, dim=0)
-        self.last_firing_rate = out.detach().mean()  # [Monitor]
+    def neuronal_charge(self, x: torch.Tensor):
+        # decay = 1 - 1/tau = 1 - sigmoid(w)
+        decay = 1.0 - self.w.sigmoid()
+        self.v = decay * self.v + x
+    
+    def forward(self, x: torch.Tensor):
+        out = super().forward(x)
+        self.last_firing_rate = out.detach().mean()
         return out
 
 
@@ -144,30 +138,15 @@ class SDBGLAttention(nn.Module):
 
         # --- SD-BGLA gate neurons ---
         # Decay gate: one PLIF per channel (d_k channels per head)
-        decay_gate_lif_tau_min = float(getattr(model_config, "decay_gate_lif_tau_min", 1.5))
-        decay_gate_lif_tau_max = float(getattr(model_config, "decay_gate_lif_tau_max", 8.0))
+        decay_gate_lif_init_tau = float(getattr(model_config, "decay_gate_lif_init_tau", 2.0))
         
         self.decay_proj = nn.Linear(self.head_dim, self.head_dim, bias=True)
         self.decay_bn = nn.BatchNorm1d(self.head_dim)
-        self.decay_gate = GateLIF(
+        self.decay_gate = GateLIFNode(
             self.head_dim, 
-            tau_min=decay_gate_lif_tau_min, 
-            tau_max=decay_gate_lif_tau_max, 
+            init_tau=decay_gate_lif_init_tau, 
             v_threshold=1.0
         )
-        # # Write gate: one PLIF per head (scalar gate)
-        # write_gate_lif_tau_min = float(getattr(model_config, "write_gate_lif_tau_min", 1.5))
-        # write_gate_lif_tau_max = float(getattr(model_config, "write_gate_lif_tau_max", 8.0))
-        
-        # self.write_proj = nn.Linear(1, self.head_dim, bias=False)
-        # self.write_bn = nn.BatchNorm1d(self.head_dim)
-        # self.write_gate = GateLIF(
-        #     self.head_dim, 
-        #     tau_min=write_gate_lif_tau_min, 
-        #     tau_max=write_gate_lif_tau_max, 
-        #     v_threshold=0.8
-        # )
-        # self.write_pool = nn.AdaptiveAvgPool1d(1)  # head_dim -> 1
 
         # Precompute decay power table: table[m] = (1-δ)^m
         max_T = 32  # generous upper bound
@@ -199,24 +178,25 @@ class SDBGLAttention(nn.Module):
 
         out   = self.k_lif(k_pre)          # DualOutput
         k     = rearrange(out.spike, "T B N (H D) -> T B H N D", H=H, D=D)
-        u_k   = rearrange(out.v_seq, "T B N (H D) -> T B H N D", H=H, D=D)
+        # u_k   = rearrange(out.v_seq, "T B N (H D) -> T B H N D", H=H, D=D)
+        u_k_pooled = rearrange(out.v_seq, "T B N (H D) -> T B H N D", H=H, D=D)
+        u_k_pooled = u_k_pooled.mean(dim=3)  # [T, B, H, D]
 
         v = self.v_linear(x_flat)
         v = _bn1d(rearrange(v, "(T B) N C -> T B N C", T=T, B=B), self.v_bn)
         v = self.v_lif(v)
         v = rearrange(v, "T B N (H D) -> T B H N D", H=H, D=D)
 
-        return q, k, v, u_k
+        return q, k, v, u_k_pooled
 
-    def _compute_gate_spikes(self, k: torch.Tensor, u_k: torch.Tensor):
+    def _compute_gate_spikes(self, k: torch.Tensor, u_k_pooled: torch.Tensor):
         """Compute decay and write gate spikes from k spikes and membrane potential.
 
         Args:
             k: [T, B, H, N, D]   (binary key spikes)
-            u_k: [T, B, H, N, D] (key membrane potential)
+            u_k_pooled: [T, B, H, D] (key membrane potential, pooled over N)
         Returns:
             s_gamma: [T, B, H, D]  (binary decay spikes, per channel)
-            s_beta:  [T, B, H, 1]  (binary write spikes, scalar per head)
         """
         T, B, H, N, D = k.shape
 
@@ -225,29 +205,12 @@ class SDBGLAttention(nn.Module):
         # u_bar = self.decay_proj(u_bar)
         
         # s_gamma = self.decay_gate(u_bar)  # [T, B, H, D], binary
-        u_bar = u_k.mean(dim=3)                          # [T, B, H, D]
-        u_bar = rearrange(u_bar, "T B H D -> (T B H) D")
+        u_bar = rearrange(u_k_pooled, "T B H D -> (T B H) D")
         u_bar = self.decay_proj(u_bar)
         u_bar = self.decay_bn(u_bar)
         u_bar = rearrange(u_bar, "(T B H) D -> T B H D", T=T, B=B, H=H)
         s_gamma = self.decay_gate(u_bar)
 
-        # # Write gate input: scalar pooled spike rate
-        # # r = k.float().mean(dim=(3, 4), keepdim=True)  # [T, B, H, 1, 1]
-        # # r = r.squeeze(-1)  # [T, B, H, 1]
-        # # r = self.write_proj(r)  
-        # # s_beta = self.write_gate(r)  # [T, B, H, 1], binary
-        # r = k.float().mean(dim=(3, 4), keepdim=True)      # [T, B, H, 1, 1]
-        # r = r.squeeze(-1)                                  # [T, B, H, 1]
-        # r = rearrange(r, "T B H 1 -> (T B H) 1")
-        # r = self.write_proj(r)                             # (TBH, D)
-        # r = self.write_bn(r)
-        # r = rearrange(r, "(T B H) D -> T B H D", T=T, B=B, H=H)
-        # s_beta_full = self.write_gate(r)                   # [T, B, H, D]
-        # s_beta = s_beta_full.mean(dim=-1, keepdim=True)    # [T, B, H, 1]
-        # s_beta = (s_beta > 0.5).float()                    # 重新二值化
-
-        # return s_gamma, s_beta
         return s_gamma
 
     def _build_causal_matrix(self, s_gamma: torch.Tensor):
@@ -289,6 +252,24 @@ class SDBGLAttention(nn.Module):
         L = L * causal_mask  # [B, H, D, T, T]
 
         return L
+    def _forward_recurrent(self, kv, s_gamma):
+        """Sequential recurrence over T (replaces _build_causal_matrix + matmul).
+        
+        kv: [T, B, H, D, D]
+        s_gamma: [T, B, H, D]
+        Returns: S_all [T, B, H, D, D]
+        """
+        T = kv.shape[0]
+        S = torch.zeros_like(kv[0])  # [B, H, D, D]
+        out = []
+        for t in range(T):
+            # decay: S *= (1 - s_gamma * delta)
+            # s_gamma is binary, delta = 2^{-shift_k}
+            gate = s_gamma[t].unsqueeze(-1)  # [B, H, D, 1]
+            S = S - gate * (S * self.delta)  # bit-shift decay where gate fires
+            S = S + kv[t]                     # write (always write, no write gate)
+            out.append(S)
+        return torch.stack(out)  # [T, B, H, D, D]
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -322,16 +303,20 @@ class SDBGLAttention(nn.Module):
         # kv: [T, B, H, D_k, D_v] -> [B, H, D_k, T, D_v]
         kv_perm = rearrange(kv, "T B H Dk Dv -> B H Dk T Dv")
 
-        # L: [B, H, D_k, T_out, T_in] @ kv_perm: [B, H, D_k, T_in, D_v]
-        # -> S_all: [B, H, D_k, T, D_v]
-        S_all = torch.matmul(L, kv_perm)
+        # ######### [v1] #########
+        # # L: [B, H, D_k, T_out, T_in] @ kv_perm: [B, H, D_k, T_in, D_v]
+        # # -> S_all: [B, H, D_k, T, D_v]
+        # S_all = torch.matmul(L, kv_perm)
 
-        # S_all[b, h, dk, t, dv] = S_t[dv, dk] for head h
-        # We need o_n^(t) = S_t @ q_n^(t) * scale
-        # S_t: [D_v, D_k], q: [D_k] -> o: [D_v]
-        # In batch form: S_all is [B, H, D_k, T, D_v]
-        # Rearrange to [T, B, H, D_v, D_k] for matmul with q
-        S_all = rearrange(S_all, "B H Dk T Dv -> T B H Dv Dk")
+        # # S_all[b, h, dk, t, dv] = S_t[dv, dk] for head h
+        # # We need o_n^(t) = S_t @ q_n^(t) * scale
+        # # S_t: [D_v, D_k], q: [D_k] -> o: [D_v]
+        # # In batch form: S_all is [B, H, D_k, T, D_v]
+        # # Rearrange to [T, B, H, D_v, D_k] for matmul with q
+        # S_all = rearrange(S_all, "B H Dk T Dv -> T B H Dv Dk")
+
+        ########## [v2] #########
+        S_all = self._forward_recurrent(kv, s_gamma)  # [T, B, H, D, D]
 
         # q: [T, B, H, N, D_k] -> for each token, o = S @ q = [D_v, D_k] @ [D_k]
         # Batched: S_all: [T, B, H, D_v, D_k], q: [T, B, H, N, D_k]

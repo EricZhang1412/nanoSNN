@@ -1,1 +1,1 @@
-output_dir: ./exp/seed42_bf16-mixed-outputs-batch224-label-smoothing-0.1_layerscale0.01_800ep_gatedlif-v2.6
+output_dir: ./exp/cifar10/bs64.lr1e-3.wd0.05.auto_augment.decay_gate_lif_init_tau2.0

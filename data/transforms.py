@@ -73,7 +73,14 @@ def build_train_transform(data_config):
         # final
         final_tfl = [transforms.ToTensor(), _normalize(name)]
         if re_prob > 0.:
-            final_tfl.append(RandomErasing(re_prob, mode=re_mode, max_count=re_count, device="cpu"))
+            final_tfl.append(
+                RandomErasing(
+                    re_prob, 
+                    mode=re_mode, 
+                    max_count=re_count, 
+                    device="cpu"
+                )
+            )
 
         return transforms.Compose(primary_tfl + secondary_tfl + final_tfl)
 

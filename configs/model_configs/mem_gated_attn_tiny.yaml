@@ -18,9 +18,6 @@ tau: 2.0
 v_threshold: 1.0
 detach_reset: true
 shift_k: 2
-decay_gate_lif_tau_min: 2.0
-decay_gate_lif_tau_max: 10.0
-write_gate_lif_tau_min: 1.0
-write_gate_lif_tau_max: 6.0
+decay_gate_lif_init_tau: 2.0
 attn_layer_scale_init_values: 0.01
 mlp_layer_scale_init_values: 0.01

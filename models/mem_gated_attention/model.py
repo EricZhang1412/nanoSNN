@@ -26,6 +26,7 @@ from spikingjelly.activation_based.neuron import BaseNode
 from torch.utils.checkpoint import checkpoint
 
 from ..common.spike_ops import build_neuron, temporal_mean
+from ..common.tl_neuron_ops import build_triton_neuron
 from ..common.registry import register_model
 
 
@@ -115,26 +116,35 @@ class SDBGLAttention(nn.Module):
         self.delta = 2.0 ** (-shift_k)  # fixed decay magnitude
 
         # Q, K, V projections (same as Spikformer)
-        self.shortcut_lif = build_neuron(model_config)
+        # self.shortcut_lif = build_neuron(model_config)
+        self.shortcut_lif = build_triton_neuron(model_config, output_mode="spike")
+
         self.q_linear = nn.Linear(dim, dim)
         self.q_bn = nn.BatchNorm1d(dim)
-        self.q_lif = build_neuron(model_config)
+        # self.q_lif = build_neuron(model_config)
+        self.q_lif = build_triton_neuron(model_config, output_mode="spike")
 
         self.k_linear = nn.Linear(dim, dim)
         self.k_bn = nn.BatchNorm1d(dim)
-        self.k_lif = build_neuron(model_config, output_mode="dual")
+        # self.k_lif = build_neuron(model_config, output_mode="dual")
+        self.k_lif = build_triton_neuron(model_config, output_mode="dual")
 
         self.v_linear = nn.Linear(dim, dim)
         self.v_bn = nn.BatchNorm1d(dim)
-        self.v_lif = build_neuron(model_config)
+        # self.v_lif = build_neuron(model_config)
+        self.v_lif = build_triton_neuron(model_config, output_mode="spike")
 
         # Output LIF (unchanged from baseline — preserves spike-driven output)
-        self.attn_lif = build_neuron(model_config, v_threshold=0.5)
+        # self.attn_lif = build_neuron(model_config, v_threshold=0.5)
+        self.attn_lif = build_triton_neuron(model_config, v_threshold=0.5, output_mode="spike")
 
         # Output projection
         self.proj_linear = nn.Linear(dim, dim)
         self.proj_bn = nn.BatchNorm1d(dim)
-        self.proj_lif = build_neuron(model_config)
+        # self.proj_lif = build_neuron(model_config)
+        self.proj_lif = build_triton_neuron(model_config, output_mode="spike")
+
+
 
         # --- SD-BGLA gate neurons ---
         # Decay gate: one PLIF per channel (d_k channels per head)
@@ -340,11 +350,13 @@ class SDBGLAMlp(nn.Module):
 
         self.fc1_linear = nn.Linear(dim, mlp_hidden)
         self.fc1_bn = nn.BatchNorm1d(mlp_hidden)
-        self.fc1_lif = build_neuron(model_config)
+        # self.fc1_lif = build_neuron(model_config)
+        self.fc1_lif = build_triton_neuron(model_config, output_mode="spike")
 
         self.fc2_linear = nn.Linear(mlp_hidden, dim)
         self.fc2_bn = nn.BatchNorm1d(dim)
-        self.fc2_lif = build_neuron(model_config)
+        # self.fc2_lif = build_neuron(model_config)
+        self.fc2_lif = build_triton_neuron(model_config, output_mode="spike")
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: [T, B, N, C]

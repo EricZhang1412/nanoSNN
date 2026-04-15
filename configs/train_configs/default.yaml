@@ -1,10 +1,10 @@
-batch_size_per_gpu: 64
-random_seed: 42
+batch_size_per_gpu: 160
+random_seed: 3407
 
 trainer:
   strategy: ddp_find_unused_parameters_true
   precision: "bf16-mixed" # choices: bf16-mixed, 32-true, 16-true
-  max_epochs: 800
+  max_epochs: 2400
   gradient_clip_val: 1.0
   gradient_clip_algorithm: norm
   log_every_n_steps: 50

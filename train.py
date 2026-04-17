@@ -44,6 +44,63 @@ def _namespace_to_dict(value):
         return {key: _namespace_to_dict(val) for key, val in vars(value).items()}
     return value
 
+
+import gc
+from types import SimpleNamespace
+
+def _bytes_to_gb(b):
+    return b / 1e9
+
+def profile_layer_memory(model, x, name="root"):
+    """Run forward pass and report memory growth per submodule."""
+    hooks = []
+    memory_before = {}
+    memory_after = {}
+    
+    def make_pre_hook(n):
+        def hook(module, input):
+            torch.cuda.synchronize()
+            memory_before[n] = torch.cuda.memory_allocated()
+        return hook
+    
+    def make_post_hook(n):
+        def hook(module, input, output):
+            torch.cuda.synchronize()
+            memory_after[n] = torch.cuda.memory_allocated()
+        return hook
+    
+    for name, module in model.named_modules():
+        if len(list(module.children())) == 0:  # leaf only
+            continue
+        h1 = module.register_forward_pre_hook(make_pre_hook(name))
+        h2 = module.register_forward_hook(make_post_hook(name))
+        hooks.extend([h1, h2])
+    
+    torch.cuda.empty_cache()
+    torch.cuda.reset_peak_memory_stats()
+    
+    with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+        out = model(x)
+    
+    for h in hooks:
+        h.remove()
+    
+    # Print sorted by memory growth
+    rows = []
+    for name in memory_before:
+        if name in memory_after:
+            delta = memory_after[name] - memory_before[name]
+            rows.append((name, delta))
+    rows.sort(key=lambda x: -x[1])
+    
+    print(f"\n{'Module':<60s} {'Mem Δ (MB)':>12s}")
+    print("-" * 72)
+    for name, delta in rows[:30]:
+        print(f"{name:<60s} {delta/1e6:>12.1f}")
+    
+    print(f"\nTotal peak: {_bytes_to_gb(torch.cuda.max_memory_allocated()):.2f} GB")
+    return out
+
 def train(args):
     rank_zero_info("########## nanoSNN training ##########")
 
@@ -168,6 +225,13 @@ def train(args):
         rank_zero_info(f"Resuming from: {ckpt_path}")
     else:
         rank_zero_info("Training from scratch.")
+        
+    # profiling
+    BS = 4  # small batch to isolate per-layer cost
+    x = torch.randn(BS, 3, 224, 224, device='cuda', dtype=torch.float32)
+    lit_model = lit_model.cuda() # 整个 Lightning module 
+    lit_model.model.train()
+    profile_layer_memory(lit_model, x)
 
     trainer.fit(lit_model, datamodule=datamodule, ckpt_path=ckpt_path)
 

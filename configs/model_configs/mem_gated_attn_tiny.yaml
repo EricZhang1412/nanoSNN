@@ -1,6 +1,6 @@
 name: mem_gated_attn
 T: 4
-num_classes: 10
+num_classes: 1000
 image_size: 32
 patch_size: 4
 in_channels: 3
@@ -21,3 +21,4 @@ shift_k: 2
 decay_gate_lif_init_tau: 2.0
 attn_layer_scale_init_values: 0.01
 mlp_layer_scale_init_values: 0.01
+attn_precision: tf32

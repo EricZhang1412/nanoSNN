@@ -1,5 +1,5 @@
 name: imagenet_hf
-hf_path: /data/maluzhang-folder/datasets/imagenet-1k
+hf_path: /inspire/ssd/project/space-intelligence-multimodality/liuzhenyang-240108540154/Simo/datasets/imagenet-1k
 num_classes: 1000
 image_size: 224
 in_channels: 3

@@ -28,19 +28,41 @@ from torch.utils.checkpoint import checkpoint
 from ..common.spike_ops import build_neuron, temporal_mean
 from ..common.tl_neuron_ops import build_triton_neuron
 from ..common.registry import register_model
+from ..common.tl_spike_ops import TritonLIF, TritonGateLIF, TritonDualLIF
 
+from .mga_triton_ops import sdbgla_attention
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _bn1d(x: torch.Tensor, bn: nn.BatchNorm1d) -> torch.Tensor:
-    """Apply BN1d on [T, B, N, C]."""
-    T, B, N, C = x.shape
-    x = rearrange(x, "T B N C -> (T B) N C")
-    x = rearrange(bn(rearrange(x, "TB N C -> TB C N")), "TB C N -> TB N C")
-    return rearrange(x, "(T B) N C -> T B N C", T=T, B=B).contiguous()
+# def _bn1d(x: torch.Tensor, bn: nn.BatchNorm1d) -> torch.Tensor:
+#     """Apply BN1d on [T, B, N, C]."""
+#     T, B, N, C = x.shape
+#     x = rearrange(x, "T B N C -> (T B) N C")
+#     x = rearrange(bn(rearrange(x, "TB N C -> TB C N")), "TB C N -> TB N C")
+#     return rearrange(x, "(T B) N C -> T B N C", T=T, B=B).contiguous()
 
+def _bn1d(x: torch.Tensor, bn: nn.BatchNorm1d) -> torch.Tensor:
+    """Apply nn.BatchNorm1d(C) on the last dim of x. Shape-agnostic.
+    
+    Semantically equivalent to transpose-based version but avoids ~3 HBM
+    copies per call by using a single reshape→BN→reshape.
+    
+    Args:
+        x: tensor with C in last dim, e.g. [T, B, N, C] or [TB, N, C]
+        bn: nn.BatchNorm1d(C)
+    
+    Returns:
+        same shape as x, BN applied per-C over all (*) positions.
+    """
+    orig_shape = x.shape
+    C = orig_shape[-1]
+    if not x.is_contiguous():
+        x = x.contiguous()
+    x_flat = x.view(-1, C)
+    x_flat = bn(x_flat)
+    return x_flat.view(orig_shape)
 
 # ---------------------------------------------------------------------------
 # Gate LIF Neuron — produces binary gate spikes
@@ -74,6 +96,7 @@ class GateLIFNode(BaseNode):
 
     def neuronal_charge(self, x: torch.Tensor):
         # decay = 1 - 1/tau = 1 - sigmoid(w)
+        # self.v_float_to_tensor(x)
         decay = 1.0 - self.w.sigmoid()
         self.v = decay * self.v + x
     
@@ -162,6 +185,10 @@ class SDBGLAttention(nn.Module):
         max_T = 32  # generous upper bound
         table = torch.tensor([(1.0 - self.delta) ** m for m in range(max_T + 1)])
         self.register_buffer("decay_table", table)
+        
+        # NEW: make precision configurable 
+        self.attn_precision = str(getattr(model_config, "attn_precision", "tf32")).lower() 
+        assert self.attn_precision in ("ieee", "tf32", "tf32x3")
 
     def _get_qkv(self, x: torch.Tensor):
         """Produce binary Q, K, V and K's membrane potential.
@@ -263,23 +290,14 @@ class SDBGLAttention(nn.Module):
 
         return L
     def _forward_recurrent(self, kv, s_gamma):
-        """Sequential recurrence over T (replaces _build_causal_matrix + matmul).
-        
-        kv: [T, B, H, D, D]
-        s_gamma: [T, B, H, D]
-        Returns: S_all [T, B, H, D, D]
-        """
         T = kv.shape[0]
-        S = torch.zeros_like(kv[0])  # [B, H, D, D]
+        S = torch.zeros_like(kv[0])
         out = []
         for t in range(T):
-            # decay: S *= (1 - s_gamma * delta)
-            # s_gamma is binary, delta = 2^{-shift_k}
-            gate = s_gamma[t].unsqueeze(-1)  # [B, H, D, 1]
-            S = S - gate * (S * self.delta)  # bit-shift decay where gate fires
-            S = S + kv[t]                     # write (always write, no write gate)
+            gate = s_gamma[t].unsqueeze(-1)          # [B, H, D, 1]
+            S = S * (1.0 - gate * self.delta) + kv[t]  # 融合 decay + write
             out.append(S)
-        return torch.stack(out)  # [T, B, H, D, D]
+        return torch.stack(out)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -292,46 +310,17 @@ class SDBGLAttention(nn.Module):
         H, D = self.num_heads, self.head_dim
 
         # Step 1: binary Q, K, V + membrane potential
-        q, k, v, u_k = self._get_qkv(x)  # all [T, B, H, N, D]
+        q, k, v, u_k = self._get_qkv(x)   # all [T, B, H, N, D]
 
         # Step 2: gate spikes
         s_gamma = self._compute_gate_spikes(k, u_k)
-        # s_gamma: [T, B, H, D]
-
-        # Step 3: spatial KV aggregation for each timestep (addition-only)
-        # KV_t = k_t^T @ v_t,  k:[B,H,N,D] -> [B,H,D,N], v:[B,H,N,D]
-        # KV_t: [B, H, D, D] per timestep -> stack to [T, B, H, D, D]
-        kv = torch.einsum("TBHND,TBHNE->TBHDE", k.float(), v.float())
-        # kv: [T, B, H, D_k, D_v] — note: D_k = D_v = D here
-
-        # Step 4: parallel temporal attention via causal matrix L
-        # L: [B, H, D_k, T, T]
-        L = self._build_causal_matrix(s_gamma)
-
-        # S_stack[t, j] = sum_τ L[t, τ, j] * KV[τ, j]
-        # where KV[τ, j] is the j-th row of KV_τ (a D_v-dim vector)
-        # kv: [T, B, H, D_k, D_v] -> [B, H, D_k, T, D_v]
-        kv_perm = rearrange(kv, "T B H Dk Dv -> B H Dk T Dv")
-
-        # ######### [v1] #########
-        # # L: [B, H, D_k, T_out, T_in] @ kv_perm: [B, H, D_k, T_in, D_v]
-        # # -> S_all: [B, H, D_k, T, D_v]
-        # S_all = torch.matmul(L, kv_perm)
-
-        # # S_all[b, h, dk, t, dv] = S_t[dv, dk] for head h
-        # # We need o_n^(t) = S_t @ q_n^(t) * scale
-        # # S_t: [D_v, D_k], q: [D_k] -> o: [D_v]
-        # # In batch form: S_all is [B, H, D_k, T, D_v]
-        # # Rearrange to [T, B, H, D_v, D_k] for matmul with q
-        # S_all = rearrange(S_all, "B H Dk T Dv -> T B H Dv Dk")
-
-        ########## [v2] #########
-        S_all = self._forward_recurrent(kv, s_gamma)  # [T, B, H, D, D]
-
-        # q: [T, B, H, N, D_k] -> for each token, o = S @ q = [D_v, D_k] @ [D_k]
-        # Batched: S_all: [T, B, H, D_v, D_k], q: [T, B, H, N, D_k]
-        # o = einsum("...vk,...nk->...nv", S_all, q)
-        o = torch.einsum("TBHvk,TBHNk->TBHNv", S_all, q.float()) * self.scale
+        
+        o = sdbgla_attention( 
+                             q, k, v, s_gamma, 
+                             delta=self.delta, 
+                             scale=self.scale, 
+                             precision=self.attn_precision, 
+                            )
 
         # Step 5: output — LIF threshold (spike-driven, binary output)
         o = rearrange(o, "T B H N D -> T B N (H D)")
@@ -374,64 +363,128 @@ class SDBGLAMlp(nn.Module):
 # ---------------------------------------------------------------------------
 # SPS (Spike Patch Splitting) — reused from Spikformer
 # ---------------------------------------------------------------------------
+# [Deprecated]
+# class SPS(nn.Module):
+#     """Spike-driven Patch Splitting (from Spikformer)."""
+
+#     def __init__(self, in_channels: int, embed_dim: int, img_size: int,
+#                  patch_size: int, model_config):
+#         super().__init__()
+#         self.proj_conv = nn.Conv2d(in_channels, embed_dim // 8, 3, 1, 1, bias=False)
+#         self.proj_bn = nn.BatchNorm2d(embed_dim // 8)
+#         # self.proj_lif = build_neuron(model_config)
+#         self.proj_lif = build_triton_neuron(model_config, output_mode="spike")
+
+#         self.proj_conv1 = nn.Conv2d(embed_dim // 8, embed_dim // 4, 3, 1, 1, bias=False)
+#         self.proj_bn1 = nn.BatchNorm2d(embed_dim // 4)
+#         # self.proj_lif1 = build_neuron(model_config)
+#         self.proj_lif1 = build_triton_neuron(model_config, output_mode="spike")
+
+#         self.proj_conv2 = nn.Conv2d(embed_dim // 4, embed_dim // 2, 3, 1, 1, bias=False)
+#         self.proj_bn2 = nn.BatchNorm2d(embed_dim // 2)
+#         # self.proj_lif2 = build_neuron(model_config)
+#         self.proj_lif2 = build_triton_neuron(model_config, output_mode="spike")
+#         self.maxpool2 = nn.MaxPool2d(3, stride=2, padding=1)
+
+#         self.proj_conv3 = nn.Conv2d(embed_dim // 2, embed_dim, 3, 1, 1, bias=False)
+#         self.proj_bn3 = nn.BatchNorm2d(embed_dim)
+#         # self.proj_lif3 = build_neuron(model_config)
+#         self.proj_lif3 = build_triton_neuron(model_config, output_mode="spike")
+#         self.maxpool3 = nn.MaxPool2d(3, stride=2, padding=1)
+
+#         self.rpe_conv = nn.Conv2d(embed_dim, embed_dim, 3, 1, 1, bias=False)
+#         self.rpe_bn = nn.BatchNorm2d(embed_dim)
+#         # self.rpe_lif = build_neuron(model_config)
+#         self.rpe_lif = build_triton_neuron(model_config, output_mode="spike")
+
+#     def forward(self, x: torch.Tensor) -> torch.Tensor:
+#         T, B, C, H, W = x.shape
+
+#         x = self.proj_conv(rearrange(x, "T B C H W -> (T B) C H W"))
+#         x = rearrange(self.proj_bn(x), "(T B) C H W -> T B C H W", T=T, B=B)
+#         x = rearrange(self.proj_lif(x), "T B C H W -> (T B) C H W")
+
+#         x = self.proj_conv1(x)
+#         x = rearrange(self.proj_bn1(x), "(T B) C H W -> T B C H W", T=T, B=B)
+#         x = rearrange(self.proj_lif1(x), "T B C H W -> (T B) C H W")
+
+#         x = self.proj_conv2(x)
+#         x = rearrange(self.proj_bn2(x), "(T B) C H W -> T B C H W", T=T, B=B)
+#         x = rearrange(self.proj_lif2(x), "T B C H W -> (T B) C H W")
+#         x = self.maxpool2(x)
+
+#         x = self.proj_conv3(x)
+#         x = rearrange(self.proj_bn3(x), "(T B) C H W -> T B C H W", T=T, B=B)
+#         x = rearrange(self.proj_lif3(x), "T B C H W -> (T B) C H W")
+#         x = self.maxpool3(x)
+
+#         x_feat = rearrange(x, "(T B) C H W -> T B C H W", T=T, B=B)
+#         x = self.rpe_conv(x)
+#         x = rearrange(self.rpe_bn(x), "(T B) C H W -> T B C H W", T=T, B=B)
+#         x = self.rpe_lif(x)
+#         x = x + x_feat
+
+#         return rearrange(x, "T B C H W -> T B (H W) C")
 
 class SPS(nn.Module):
-    """Spike-driven Patch Splitting (from Spikformer)."""
+    """Spike-driven Patch Splitting with strided conv (earlier downsampling)."""
 
     def __init__(self, in_channels: int, embed_dim: int, img_size: int,
                  patch_size: int, model_config):
         super().__init__()
-        self.proj_conv = nn.Conv2d(in_channels, embed_dim // 8, 3, 1, 1, bias=False)
+        # Stage 0: stride=2 → H/2. Downsamples immediately.
+        self.proj_conv = nn.Conv2d(in_channels, embed_dim // 8, 3, stride=2, padding=1, bias=False)
         self.proj_bn = nn.BatchNorm2d(embed_dim // 8)
-        self.proj_lif = build_neuron(model_config)
+        self.proj_lif = build_triton_neuron(model_config, output_mode="spike")
 
-        self.proj_conv1 = nn.Conv2d(embed_dim // 8, embed_dim // 4, 3, 1, 1, bias=False)
+        # Stage 1: stride=1
+        self.proj_conv1 = nn.Conv2d(embed_dim // 8, embed_dim // 4, 3, stride=1, padding=1, bias=False)
         self.proj_bn1 = nn.BatchNorm2d(embed_dim // 4)
-        self.proj_lif1 = build_neuron(model_config)
+        self.proj_lif1 = build_triton_neuron(model_config, output_mode="spike")
 
-        self.proj_conv2 = nn.Conv2d(embed_dim // 4, embed_dim // 2, 3, 1, 1, bias=False)
+        # Stage 2: stride=2 → H/4. No maxpool afterwards.
+        self.proj_conv2 = nn.Conv2d(embed_dim // 4, embed_dim // 2, 3, stride=2, padding=1, bias=False)
         self.proj_bn2 = nn.BatchNorm2d(embed_dim // 2)
-        self.proj_lif2 = build_neuron(model_config)
-        self.maxpool2 = nn.MaxPool2d(3, stride=2, padding=1)
+        self.proj_lif2 = build_triton_neuron(model_config, output_mode="spike")
 
-        self.proj_conv3 = nn.Conv2d(embed_dim // 2, embed_dim, 3, 1, 1, bias=False)
+        # Stage 3: stride=1
+        self.proj_conv3 = nn.Conv2d(embed_dim // 2, embed_dim, 3, stride=1, padding=1, bias=False)
         self.proj_bn3 = nn.BatchNorm2d(embed_dim)
-        self.proj_lif3 = build_neuron(model_config)
-        self.maxpool3 = nn.MaxPool2d(3, stride=2, padding=1)
+        self.proj_lif3 = build_triton_neuron(model_config, output_mode="spike")
 
-        self.rpe_conv = nn.Conv2d(embed_dim, embed_dim, 3, 1, 1, bias=False)
+        # RPE unchanged
+        self.rpe_conv = nn.Conv2d(embed_dim, embed_dim, 3, stride=1, padding=1, bias=False)
         self.rpe_bn = nn.BatchNorm2d(embed_dim)
-        self.rpe_lif = build_neuron(model_config)
+        self.rpe_lif = build_triton_neuron(model_config, output_mode="spike")
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         T, B, C, H, W = x.shape
 
         x = self.proj_conv(rearrange(x, "T B C H W -> (T B) C H W"))
-        x = rearrange(self.proj_bn(x), "(T B) C H W -> T B C H W", T=T, B=B).contiguous()
-        x = rearrange(self.proj_lif(x), "T B C H W -> (T B) C H W").contiguous()
+        x = rearrange(self.proj_bn(x), "(T B) C H W -> T B C H W", T=T, B=B)
+        x = rearrange(self.proj_lif(x), "T B C H W -> (T B) C H W")
 
         x = self.proj_conv1(x)
-        x = rearrange(self.proj_bn1(x), "(T B) C H W -> T B C H W", T=T, B=B).contiguous()
-        x = rearrange(self.proj_lif1(x), "T B C H W -> (T B) C H W").contiguous()
+        x = rearrange(self.proj_bn1(x), "(T B) C H W -> T B C H W", T=T, B=B)
+        x = rearrange(self.proj_lif1(x), "T B C H W -> (T B) C H W")
 
         x = self.proj_conv2(x)
-        x = rearrange(self.proj_bn2(x), "(T B) C H W -> T B C H W", T=T, B=B).contiguous()
-        x = rearrange(self.proj_lif2(x), "T B C H W -> (T B) C H W").contiguous()
-        x = self.maxpool2(x)
+        x = rearrange(self.proj_bn2(x), "(T B) C H W -> T B C H W", T=T, B=B)
+        x = rearrange(self.proj_lif2(x), "T B C H W -> (T B) C H W")
+        # [no maxpool2]
 
         x = self.proj_conv3(x)
-        x = rearrange(self.proj_bn3(x), "(T B) C H W -> T B C H W", T=T, B=B).contiguous()
-        x = rearrange(self.proj_lif3(x), "T B C H W -> (T B) C H W").contiguous()
-        x = self.maxpool3(x)
+        x = rearrange(self.proj_bn3(x), "(T B) C H W -> T B C H W", T=T, B=B)
+        x = rearrange(self.proj_lif3(x), "T B C H W -> (T B) C H W")
+        # [no maxpool3]
 
-        x_feat = rearrange(x, "(T B) C H W -> T B C H W", T=T, B=B).contiguous()
+        x_feat = rearrange(x, "(T B) C H W -> T B C H W", T=T, B=B)
         x = self.rpe_conv(x)
-        x = rearrange(self.rpe_bn(x), "(T B) C H W -> T B C H W", T=T, B=B).contiguous()
+        x = rearrange(self.rpe_bn(x), "(T B) C H W -> T B C H W", T=T, B=B)
         x = self.rpe_lif(x)
         x = x + x_feat
 
         return rearrange(x, "T B C H W -> T B (H W) C")
-
 
 # ---------------------------------------------------------------------------
 # SD-BGLA Block (Attention + MLP)
@@ -520,6 +573,7 @@ class SDBGLAFormer(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: [T, B, C, H, W]
         x = self.patch_embed(x)   # [T, B, N, C]
+        # x = checkpoint(self.patch_embed, x, use_reentrant=False)
         for blk in self.blocks:
             x = blk(x)
         x = x.mean(dim=2)         # [T, B, C]

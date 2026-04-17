@@ -48,6 +48,7 @@ class LitVisionSNN(L.LightningModule):
     def __init__(self, model: nn.Module, optimizer_config: Any, train_config: Any, data_config: Any):
         super().__init__()
         self.model = model
+        # self.model = torch.compile(model, mode="reduce-overhead")
         self.optimizer_config = optimizer_config
         self.train_config = train_config
         self.data_config = data_config
@@ -82,10 +83,11 @@ class LitVisionSNN(L.LightningModule):
         return expand_static_to_temporal(x, self.T)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        functional.reset_net(self.model)
         if self.model.__class__.__name__ != "SpikeDrivenTransformerV3":
             x = self._prepare_input(x)
         logits = self.model(x)
-        functional.reset_net(self.model)
+        # functional.reset_net(self.model)
         return logits
 
     def _shared_step(self, batch, split: str):
@@ -109,6 +111,7 @@ class LitVisionSNN(L.LightningModule):
     # def training_step(self, batch, batch_idx: int):
     #     return self._shared_step(batch, "train")
     def training_step(self, batch, batch_idx: int):
+        # functional.reset_net(self.model)
         x, y = batch
         if self.mixup_fn is not None:
             x, y = self.mixup_fn(x, y)  # y 变成 soft label
@@ -134,6 +137,11 @@ class LitVisionSNN(L.LightningModule):
 
         if self.mixup_off_epoch and self.mixup_fn is not None:
             self.mixup_fn.mixup_enabled = self.current_epoch < self.mixup_off_epoch
+            
+        for m in self.modules():
+            if hasattr(m, 'reset'):
+                m.reset()
+
 
     def on_train_batch_end(self, outputs, batch, batch_idx):
         if self._step_start_time is not None and self.trainer.is_global_zero:
@@ -149,6 +157,11 @@ class LitVisionSNN(L.LightningModule):
                     dr = blk.attn.decay_gate.last_firing_rate
                     if dr is not None:
                         self.log(f"gate/block{i}_decay_fr", dr, on_step=True, on_epoch=False)
+                        
+        for m in self.modules():
+            if hasattr(m, 'reset'):
+                m.reset()
+
 
     def configure_optimizers(self):
         lr = float(getattr(self.optimizer_config, "lr", 1e-3))

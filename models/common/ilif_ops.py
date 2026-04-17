@@ -3,7 +3,8 @@ import torch.nn as nn
 
 class Quant(torch.autograd.Function):
     @staticmethod
-    @torch.cuda.amp.custom_fwd
+    # @torch.cuda.amp.custom_fwd
+    @torch.amp.custom_fwd(device_type='cuda')
     def forward(ctx, i, min_value, max_value):
         ctx.min = min_value
         ctx.max = max_value
@@ -11,7 +12,8 @@ class Quant(torch.autograd.Function):
         return torch.round(torch.clamp(i, min=min_value, max=max_value))
 
     @staticmethod
-    @torch.cuda.amp.custom_fwd
+    # @torch.cuda.amp.custom_fwd
+    @torch.amp.custom_fwd(device_type='cuda')
     def backward(ctx, grad_output):
         grad_input = grad_output.clone()
         i, = ctx.saved_tensors

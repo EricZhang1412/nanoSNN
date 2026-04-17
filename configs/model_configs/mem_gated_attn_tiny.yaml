@@ -1,5 +1,5 @@
 name: mem_gated_attn
-T: 4
+T: 16
 num_classes: 10
 image_size: 32
 patch_size: 4

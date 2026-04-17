@@ -1,5 +1,5 @@
 name: spikformer
-T: 16
+T: 4
 num_classes: 10
 image_size: 32
 patch_size: 4
@@ -9,8 +9,16 @@ depth: 4
 num_heads: 12
 mlp_ratio: 4.0
 attention_type: quadratic
+psp_gate_on: qk
+psp_tau: 2.0
+psp_gate_fn: sigmoid
+psp_gate_scale: 1.0
 neuron_type: lif
 tau: 2.0
 v_threshold: 1.0
 detach_reset: true
-attention_type: quadratic
+attention_type: psp_linear
+psp_gate_on: qk
+psp_tau: 2.0
+psp_gate_fn: sigmoid
+psp_gate_scale: 1.0

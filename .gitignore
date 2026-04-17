@@ -27,7 +27,7 @@ wandb/
 tensorboard/
 checkpoints/
 *.ckpt
-
+analysis_outputs/
 # OS / editor
 .DS_Store
 .idea/

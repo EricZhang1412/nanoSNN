@@ -1,1 +1,1 @@
-output_dir: ./exp/imagenet-1k/seed42_bf16-mixed-outputs-batch24
+output_dir: ./exp/imagenet-1k/seed42_batch512_lr1e-3_400epoch

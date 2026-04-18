@@ -32,16 +32,6 @@ from ..common.tl_spike_ops import TritonLIF, TritonGateLIF, TritonDualLIF
 
 from .mga_triton_ops import sdbgla_attention
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-# def _bn1d(x: torch.Tensor, bn: nn.BatchNorm1d) -> torch.Tensor:
-#     """Apply BN1d on [T, B, N, C]."""
-#     T, B, N, C = x.shape
-#     x = rearrange(x, "T B N C -> (T B) N C")
-#     x = rearrange(bn(rearrange(x, "TB N C -> TB C N")), "TB C N -> TB N C")
-#     return rearrange(x, "(T B) N C -> T B N C", T=T, B=B).contiguous()
 
 def _bn1d(x: torch.Tensor, bn: nn.BatchNorm1d) -> torch.Tensor:
     """Apply nn.BatchNorm1d(C) on the last dim of x. Shape-agnostic.
@@ -181,10 +171,10 @@ class SDBGLAttention(nn.Module):
             v_threshold=1.0
         )
 
-        # Precompute decay power table: table[m] = (1-δ)^m
-        max_T = 32  # generous upper bound
-        table = torch.tensor([(1.0 - self.delta) ** m for m in range(max_T + 1)])
-        self.register_buffer("decay_table", table)
+        # # Precompute decay power table: table[m] = (1-δ)^m
+        # max_T = 32  # generous upper bound
+        # table = torch.tensor([(1.0 - self.delta) ** m for m in range(max_T + 1)])
+        # self.register_buffer("decay_table", table)
         
         # NEW: make precision configurable 
         self.attn_precision = str(getattr(model_config, "attn_precision", "tf32")).lower() 
@@ -203,27 +193,27 @@ class SDBGLAttention(nn.Module):
         H, D = self.num_heads, self.head_dim
 
         x = self.shortcut_lif(x)
-        x_flat = rearrange(x, "T B N C -> (T B) N C")
-
-        q = self.q_linear(x_flat)
-        q = _bn1d(rearrange(q, "(T B) N C -> T B N C", T=T, B=B), self.q_bn)
+ 
+        # nn.Linear broadcasts over leading dims; no need to flatten T,B.
+        # _bn1d is shape-agnostic and handles the (T,B,N,C) -> flat reshape internally.
+        q = self.q_linear(x)                         # [T, B, N, C]
+        q = _bn1d(q, self.q_bn)
         q = self.q_lif(q)
         q = rearrange(q, "T B N (H D) -> T B H N D", H=H, D=D)
-
-        k = self.k_linear(x_flat)
-        k_pre = _bn1d(rearrange(k, "(T B) N C -> T B N C", T=T, B=B), self.k_bn)
-
-        out   = self.k_lif(k_pre)          # DualOutput
-        k     = rearrange(out.spike, "T B N (H D) -> T B H N D", H=H, D=D)
-        # u_k   = rearrange(out.v_seq, "T B N (H D) -> T B H N D", H=H, D=D)
+ 
+        k_pre = self.k_linear(x)                     # [T, B, N, C]
+        k_pre = _bn1d(k_pre, self.k_bn)
+ 
+        out = self.k_lif(k_pre)                      # DualOutput
+        k = rearrange(out.spike, "T B N (H D) -> T B H N D", H=H, D=D)
         u_k_pooled = rearrange(out.v_seq, "T B N (H D) -> T B H N D", H=H, D=D)
-        u_k_pooled = u_k_pooled.mean(dim=3)  # [T, B, H, D]
-
-        v = self.v_linear(x_flat)
-        v = _bn1d(rearrange(v, "(T B) N C -> T B N C", T=T, B=B), self.v_bn)
+        u_k_pooled = u_k_pooled.mean(dim=3)          # [T, B, H, D]
+ 
+        v = self.v_linear(x)                         # [T, B, N, C]
+        v = _bn1d(v, self.v_bn)
         v = self.v_lif(v)
         v = rearrange(v, "T B N (H D) -> T B H N D", H=H, D=D)
-
+ 
         return q, k, v, u_k_pooled
 
     def _compute_gate_spikes(self, k: torch.Tensor, u_k_pooled: torch.Tensor):
@@ -242,62 +232,16 @@ class SDBGLAttention(nn.Module):
         # u_bar = self.decay_proj(u_bar)
         
         # s_gamma = self.decay_gate(u_bar)  # [T, B, H, D], binary
-        u_bar = rearrange(u_k_pooled, "T B H D -> (T B H) D")
-        u_bar = self.decay_proj(u_bar)
-        u_bar = self.decay_bn(u_bar)
-        u_bar = rearrange(u_bar, "(T B H) D -> T B H D", T=T, B=B, H=H)
+        u_bar = self.decay_proj(u_k_pooled)   # [T, B, H, D]
+        u_bar = _bn1d(u_bar, self.decay_bn)
+        # u_bar = rearrange(u_k_pooled, "T B H D -> (T B H) D")
+        # u_bar = self.decay_proj(u_bar)
+        # u_bar = self.decay_bn(u_bar)
+        # u_bar = rearrange(u_bar, "(T B H) D -> T B H D", T=T, B=B, H=H)
         s_gamma = self.decay_gate(u_bar)
 
         return s_gamma
 
-    def _build_causal_matrix(self, s_gamma: torch.Tensor):
-        """Build the T×T causal temporal attention matrix L for parallel computation.
-
-        L[t, τ, j] = s[τ] · (1-δ)^{count of s_gamma[j] from τ+1 to t}
-
-        Args:
-            s_gamma: [T, B, H, D]  (binary decay spikes)
-        Returns:
-            L: [B, H, D, T, T]  (causal matrix, lower-triangular)
-        """
-        T = s_gamma.shape[0]
-        # s_gamma: [T, B, H, D] -> [B, H, D, T]
-        sg = rearrange(s_gamma, "T B H D -> B H D T").float()
-
-        # Compute cumulative spike counts: c[τ, t] = sum of s_gamma from τ+1 to t
-        # For each pair (τ, t) with τ ≤ t
-        # Use cumsum: cum[t] = sum_{s=1}^{t} s_gamma[s]
-        # Then c[τ, t] = cum[t] - cum[τ]
-        cum = torch.cumsum(sg, dim=-1)  # [B, H, D, T]
-
-        # c[τ, t] = cum[t] - cum[τ],  shape: [B, H, D, T(t), T(τ)]
-        cum_t = cum.unsqueeze(-1)    # [B, H, D, T, 1]  (broadcast over τ)
-        cum_tau = cum.unsqueeze(-2)  # [B, H, D, 1, T]  (broadcast over t)
-        counts = cum_t - cum_tau  # [B, H, D, T, T]
-
-        # Causal mask: only τ ≤ t
-        causal_mask = torch.tril(torch.ones(T, T, device=sg.device))  # [T, T]
-
-        # Clamp counts to valid range and apply mask
-        counts = counts * causal_mask  # zero out upper triangle
-        counts = counts.clamp(min=0, max=self.decay_table.shape[0] - 1).long()
-
-        # Lookup decay powers
-        L = self.decay_table[counts]  # [B, H, D, T, T]
-
-        # Apply causal mask
-        L = L * causal_mask  # [B, H, D, T, T]
-
-        return L
-    def _forward_recurrent(self, kv, s_gamma):
-        T = kv.shape[0]
-        S = torch.zeros_like(kv[0])
-        out = []
-        for t in range(T):
-            gate = s_gamma[t].unsqueeze(-1)          # [B, H, D, 1]
-            S = S * (1.0 - gate * self.delta) + kv[t]  # 融合 decay + write
-            out.append(S)
-        return torch.stack(out)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -348,83 +292,15 @@ class SDBGLAMlp(nn.Module):
         self.fc2_lif = build_triton_neuron(model_config, output_mode="spike")
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x: [T, B, N, C]
-        T, B, N, C = x.shape
-
+        # x: [T, B, N, C]; Linear + _bn1d are shape-agnostic on last dim.
         h = self.fc1_lif(x)
-        h = self.fc1_linear(rearrange(h, "T B N C -> (T B) N C"))
-        h = _bn1d(rearrange(h, "(T B) N C -> T B N C", T=T, B=B), self.fc1_bn)
-
+        h = self.fc1_linear(h)
+        h = _bn1d(h, self.fc1_bn)
+ 
         h = self.fc2_lif(h)
-        h = self.fc2_linear(rearrange(h, "T B N C -> (T B) N C"))
-        h = _bn1d(rearrange(h, "(T B) N C -> T B N C", T=T, B=B), self.fc2_bn)
+        h = self.fc2_linear(h)
+        h = _bn1d(h, self.fc2_bn)
         return h
-
-# ---------------------------------------------------------------------------
-# SPS (Spike Patch Splitting) — reused from Spikformer
-# ---------------------------------------------------------------------------
-# [Deprecated]
-# class SPS(nn.Module):
-#     """Spike-driven Patch Splitting (from Spikformer)."""
-
-#     def __init__(self, in_channels: int, embed_dim: int, img_size: int,
-#                  patch_size: int, model_config):
-#         super().__init__()
-#         self.proj_conv = nn.Conv2d(in_channels, embed_dim // 8, 3, 1, 1, bias=False)
-#         self.proj_bn = nn.BatchNorm2d(embed_dim // 8)
-#         # self.proj_lif = build_neuron(model_config)
-#         self.proj_lif = build_triton_neuron(model_config, output_mode="spike")
-
-#         self.proj_conv1 = nn.Conv2d(embed_dim // 8, embed_dim // 4, 3, 1, 1, bias=False)
-#         self.proj_bn1 = nn.BatchNorm2d(embed_dim // 4)
-#         # self.proj_lif1 = build_neuron(model_config)
-#         self.proj_lif1 = build_triton_neuron(model_config, output_mode="spike")
-
-#         self.proj_conv2 = nn.Conv2d(embed_dim // 4, embed_dim // 2, 3, 1, 1, bias=False)
-#         self.proj_bn2 = nn.BatchNorm2d(embed_dim // 2)
-#         # self.proj_lif2 = build_neuron(model_config)
-#         self.proj_lif2 = build_triton_neuron(model_config, output_mode="spike")
-#         self.maxpool2 = nn.MaxPool2d(3, stride=2, padding=1)
-
-#         self.proj_conv3 = nn.Conv2d(embed_dim // 2, embed_dim, 3, 1, 1, bias=False)
-#         self.proj_bn3 = nn.BatchNorm2d(embed_dim)
-#         # self.proj_lif3 = build_neuron(model_config)
-#         self.proj_lif3 = build_triton_neuron(model_config, output_mode="spike")
-#         self.maxpool3 = nn.MaxPool2d(3, stride=2, padding=1)
-
-#         self.rpe_conv = nn.Conv2d(embed_dim, embed_dim, 3, 1, 1, bias=False)
-#         self.rpe_bn = nn.BatchNorm2d(embed_dim)
-#         # self.rpe_lif = build_neuron(model_config)
-#         self.rpe_lif = build_triton_neuron(model_config, output_mode="spike")
-
-#     def forward(self, x: torch.Tensor) -> torch.Tensor:
-#         T, B, C, H, W = x.shape
-
-#         x = self.proj_conv(rearrange(x, "T B C H W -> (T B) C H W"))
-#         x = rearrange(self.proj_bn(x), "(T B) C H W -> T B C H W", T=T, B=B)
-#         x = rearrange(self.proj_lif(x), "T B C H W -> (T B) C H W")
-
-#         x = self.proj_conv1(x)
-#         x = rearrange(self.proj_bn1(x), "(T B) C H W -> T B C H W", T=T, B=B)
-#         x = rearrange(self.proj_lif1(x), "T B C H W -> (T B) C H W")
-
-#         x = self.proj_conv2(x)
-#         x = rearrange(self.proj_bn2(x), "(T B) C H W -> T B C H W", T=T, B=B)
-#         x = rearrange(self.proj_lif2(x), "T B C H W -> (T B) C H W")
-#         x = self.maxpool2(x)
-
-#         x = self.proj_conv3(x)
-#         x = rearrange(self.proj_bn3(x), "(T B) C H W -> T B C H W", T=T, B=B)
-#         x = rearrange(self.proj_lif3(x), "T B C H W -> (T B) C H W")
-#         x = self.maxpool3(x)
-
-#         x_feat = rearrange(x, "(T B) C H W -> T B C H W", T=T, B=B)
-#         x = self.rpe_conv(x)
-#         x = rearrange(self.rpe_bn(x), "(T B) C H W -> T B C H W", T=T, B=B)
-#         x = self.rpe_lif(x)
-#         x = x + x_feat
-
-#         return rearrange(x, "T B C H W -> T B (H W) C")
 
 class SPS(nn.Module):
     """Spike-driven Patch Splitting with strided conv (earlier downsampling)."""
@@ -486,6 +362,30 @@ class SPS(nn.Module):
 
         return rearrange(x, "T B C H W -> T B (H W) C")
 
+class FastStem(nn.Module):
+    def __init__(self, embed_dim=384, model_config=None):
+        super().__init__()
+        # 3 → 48 → 96 → 192 → 384, 4× stride-2, 总 stride=16
+        self.stem = nn.Sequential(
+            nn.Conv2d(3, 48, 3, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(48), nn.GELU(),
+            nn.Conv2d(48, 96, 3, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(96), nn.GELU(),
+            nn.Conv2d(96, 192, 3, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(192), nn.GELU(),
+            nn.Conv2d(192, embed_dim, 3, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(embed_dim),
+        )
+        self.entry_lif = build_triton_neuron(model_config, output_mode="spike")
+
+    def forward(self, x):
+        # x: [T, B, C, H, W]，但我们只用第 0 帧
+        T, B = x.shape[:2]
+        x0 = x[0]                               # [B, 3, 224, 224]，ImageNet 是静态图
+        tokens = self.stem(x0)                  # [B, 384, 14, 14]
+        tokens = rearrange(tokens, "B C H W -> B (H W) C")
+        tokens = tokens.unsqueeze(0).expand(T, -1, -1, -1)   # 广播到 T
+        return self.entry_lif(tokens)           # 仅一个 LIF，位于 body 入口
 # ---------------------------------------------------------------------------
 # SD-BGLA Block (Attention + MLP)
 # ---------------------------------------------------------------------------
@@ -536,8 +436,10 @@ class SDBGLAFormer(nn.Module):
         in_channels = int(getattr(model_config, "in_channels", 3))
         shift_k = int(getattr(model_config, "shift_k", 1))
 
-        self.patch_embed = SPS(in_channels, embed_dim, img_size, patch_size,
-                               model_config)
+        # self.patch_embed = SPS(in_channels, embed_dim, img_size, patch_size,
+                            #    model_config)
+        self.patch_embed = FastStem(embed_dim, model_config)
+
         self.blocks = nn.ModuleList([
             SDBGLABlock(embed_dim, num_heads, mlp_ratio, shift_k=shift_k,
                         model_config=model_config)

@@ -5,7 +5,7 @@ image_size: 32
 patch_size: 4
 in_channels: 3
 embed_dim: 384
-depth: 4
+depth: 6
 num_heads: 12
 mlp_ratio: 4.0
 attention_type: quadratic

@@ -86,6 +86,7 @@ class LitVisionSNN(L.LightningModule):
         functional.reset_net(self.model)
         if self.model.__class__.__name__ != "SpikeDrivenTransformerV3":
             x = self._prepare_input(x)
+        
         logits = self.model(x)
         # functional.reset_net(self.model)
         return logits

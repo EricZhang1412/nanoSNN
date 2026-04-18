@@ -4,8 +4,8 @@
 # Example: bash multigpu_train.sh spiking_resnet18 imagenet 8 1
 # export CUDA_VISIBLE_DEVICES=0,1,2,3,4
 MODEL=${1:-mem_gated_attn_tiny}
-DATA=${2:-imagenet_hf}
-GPUS=${3:-1}
+DATA=${2:-imagenet}
+GPUS=${3:-8}
 NODES=${4:-1}
 OPTIMIZER=${5:-mem_gated_attn_tiny_imagenet1k}
 

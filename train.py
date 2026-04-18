@@ -102,6 +102,8 @@ def profile_layer_memory(model, x, name="root"):
     return out
 
 def train(args):
+    torch.backends.cudnn.benchmark = True
+    
     rank_zero_info("########## nanoSNN training ##########")
 
     project_config = load_config(args.project_config)
@@ -226,12 +228,12 @@ def train(args):
     else:
         rank_zero_info("Training from scratch.")
         
-    # profiling
-    BS = 4  # small batch to isolate per-layer cost
-    x = torch.randn(BS, 3, 224, 224, device='cuda', dtype=torch.float32)
-    lit_model = lit_model.cuda() # 整个 Lightning module 
-    lit_model.model.train()
-    profile_layer_memory(lit_model, x)
+    # # profiling
+    # BS = 4  # small batch to isolate per-layer cost
+    # x = torch.randn(BS, 3, 224, 224, device='cuda', dtype=torch.float32)
+    # lit_model = lit_model.cuda() # 整个 Lightning module 
+    # lit_model.model.train()
+    # profile_layer_memory(lit_model, x)
 
     trainer.fit(lit_model, datamodule=datamodule, ckpt_path=ckpt_path)
 

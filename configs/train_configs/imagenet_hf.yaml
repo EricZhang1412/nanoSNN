@@ -1,4 +1,4 @@
-batch_size_per_gpu: 24
+batch_size_per_gpu: 512
 random_seed: 42
 
 trainer:

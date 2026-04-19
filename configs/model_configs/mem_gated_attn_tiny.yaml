@@ -4,9 +4,9 @@ num_classes: 1000
 image_size: 32
 patch_size: 4
 in_channels: 3
-embed_dim: 384
+embed_dim: 256
 depth: 6
-num_heads: 12
+num_heads: 8
 mlp_ratio: 4.0
 attention_type: quadratic
 psp_gate_on: qk

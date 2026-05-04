@@ -12,7 +12,7 @@ It provides a config-driven training workflow for representative spiking vision 
 ## Recent News
 
 - 🎉🎉🎉**2026-05-04**: Implement Billeh-v1 visual cortex-inspired model. 
-> Ref: \
+> Ref: 
 > - 📑[A data-based large-scale model for primary visual cortex enables brain-like robust and versatile visual processing](https://www.science.org/doi/10.1126/sciadv.abq7592); 
 > - 📁[Orignial Code in Tensorflow](https://github.com/ifgovh/Training-data-driven-V1-model); 
 > - 📁[Naive Implementation in Pytorch](https://github.com/EricZhang1412/Training-data-driven-V1-model).

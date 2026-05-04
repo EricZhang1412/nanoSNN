@@ -1,0 +1,16 @@
+batch_size_per_gpu: 256
+random_seed: 42
+limit_train_batches: null
+
+trainer:
+  strategy: ddp
+  precision: "32-true"
+  max_epochs: 100
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: norm
+  log_every_n_steps: 20
+  check_val_every_n_epoch: 1
+  val_check_interval: 1.0
+  enable_checkpointing: true
+  save_every_n_train_steps: 500
+  accumulate_grad_batches: 1

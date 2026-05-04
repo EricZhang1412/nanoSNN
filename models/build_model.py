@@ -19,6 +19,7 @@ from utils import accuracy_at_k
 from . import spikformer  # noqa: F401
 from . import spike_driven_transformer  # noqa: F401
 from . import spiking_cnn  # noqa: F401
+from . import billeh_v1  # noqa: F401
 
 
 def init_weights(model: nn.Module) -> None:

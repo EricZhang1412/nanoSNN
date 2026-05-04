@@ -6,7 +6,7 @@ from torchvision import datasets
 from .transforms import build_eval_transform, build_train_transform
 
 
-STATIC_DATASETS = {"cifar10", "cifar100", "imagenet", "imagefolder"}
+STATIC_DATASETS = {"mnist", "cifar10", "cifar100", "imagenet", "imagefolder"}
 
 
 def _dataset_name(data_config) -> str:
@@ -41,6 +41,8 @@ def build_static_dataset(data_config, split: str):
         return datasets.CIFAR10(root=root, train=is_train, transform=transform, download=download)
     if name == "cifar100":
         return datasets.CIFAR100(root=root, train=is_train, transform=transform, download=download)
+    if name == "mnist":
+        return datasets.MNIST(root=root, train=is_train, transform=transform, download=download)
     if name in {"imagenet", "imagefolder"}:
         dataset_root = _resolve_imagefolder_root(root, split)
         return datasets.ImageFolder(root=dataset_root, transform=transform)

@@ -1,0 +1,9 @@
+name: mnist
+root: /data2/users/zhangjy/Training-data-driven-V1-model/data/mnist
+num_classes: 10
+image_size: 28
+in_channels: 1
+is_event: false
+download: true
+num_workers: 4
+pin_memory: true

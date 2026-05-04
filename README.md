@@ -9,6 +9,10 @@
 nanoSNN is a general vision SNN training framework inspired by `nanoLMengine`.
 It provides a config-driven training workflow for representative spiking vision models, with a unified `train.py` entrypoint, Lightning-based training loop, checkpoint resume support, and reusable dataset/model building blocks.
 
+## Recent News
+
+- 🎉🎉🎉**2026-05-04**: Implement Billeh-v1 visual cortex-inspired model. Ref: [A data-based large-scale model for primary visual cortex enables brain-like robust and versatile visual processing](https://www.science.org/doi/10.1126/sciadv.abq7592); [Orignial Code](https://github.com/ifgovh/Training-data-driven-V1-model); [Naive Pytorch Implementation](https://github.com/EricZhang1412/Training-data-driven-V1-model).
+
 ## Overview
 
 This project currently supports:

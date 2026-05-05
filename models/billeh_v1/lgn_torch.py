@@ -65,7 +65,10 @@ class TorchLGN(nn.Module):
         )
         model_id = d["model_id"].astype(str)
         is_composite = model_id.str.contains("ON") & model_id.str.contains("OFF")
-        self.register_buffer("is_composite", torch.as_tensor(is_composite.to_numpy(), dtype=torch.float32))
+        self.register_buffer(
+            "is_composite",
+            torch.as_tensor(is_composite.to_numpy(copy=True), dtype=torch.float32),
+        )
         self.register_buffer(
             "dom_temporal_kernels",
             torch.as_tensor(loaded["dom_temporal_kernels"], dtype=torch.float32),

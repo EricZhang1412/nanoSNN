@@ -124,17 +124,20 @@ class LitVisionSNN(L.LightningModule):
         functional.reset_net(self.model)
         return logits
 
-    def _huber_quantile_rate_loss(self, spikes: torch.Tensor, dt_ms: float = 1.0) -> torch.Tensor:
-        # spikes: [B, T, N]; per-neuron mean rate in Hz.
-        rate_hz = spikes.float().mean(dim=(0, 1)) * (1000.0 / dt_ms)
-        N = rate_hz.numel()
-        target = self.target_firing_rates.to(rate_hz.device)
+    def _huber_quantile_rate_loss(self, spikes: torch.Tensor) -> torch.Tensor:
+        # Match upstream TF: rate = mean(spikes, (0,1)) is per-neuron spikes per
+        # timestep, compared directly against target_firing_rates from
+        # garrett_firing_rates.pkl which is also in spikes/timestep units (max
+        # ≈ 0.066, i.e. ~66 Hz at dt=1 ms). DO NOT convert to Hz here.
+        rate = spikes.float().mean(dim=(0, 1))
+        N = rate.numel()
+        target = self.target_firing_rates.to(rate.device)
         if target.numel() != N:
             raise ValueError(
                 f"target_firing_rates size {target.numel()} != N={N}"
             )
-        perm = torch.randperm(N, device=rate_hz.device)
-        sorted_rate, _ = torch.sort(rate_hz.index_select(0, perm))
+        perm = torch.randperm(N, device=rate.device)
+        sorted_rate, _ = torch.sort(rate.index_select(0, perm))
         u = sorted_rate - target
         tau = (torch.arange(N, device=u.device, dtype=u.dtype) + 1.0) / N
         kappa = self._huber_kappa

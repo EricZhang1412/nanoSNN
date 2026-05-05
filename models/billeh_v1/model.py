@@ -57,6 +57,10 @@ class BillehV1Classifier(nn.Module):
         self.chunk_size = int(getattr(model_config, "chunk_size", 0))
         self.neurons_per_output = int(getattr(model_config, "neurons_per_output", 30))
         self.localized_readout = bool(getattr(model_config, "localized_readout", True))
+        # LGN cells output firing rates in Hz; V1 input weights are calibrated for
+        # spike-per-timestep currents. With dt=1 ms, dividing by 1000 turns Hz into
+        # spikes/ms ("Poisson-rate-equivalent" continuous current).
+        self.lgn_input_scale = float(getattr(model_config, "lgn_input_scale", 1.0))
 
         self.lgn = None
         if self.use_lgn:
@@ -245,9 +249,12 @@ class BillehV1Classifier(nn.Module):
         return x_btn
 
     def _encode(self, x_btn: torch.Tensor) -> torch.Tensor:
-        # On the LGN path, x_btn carries firing rates in Hz; pass them to V1
-        # as continuous currents (no Bernoulli/Poisson resampling, no rescale).
-        if self.use_lgn or self.encoding == "identity":
+        # On the LGN path, x_btn carries firing rates in Hz; convert to
+        # spikes/timestep via lgn_input_scale (default 1.0 = pass-through;
+        # set to 1e-3 for strict reproduction with dt=1 ms).
+        if self.use_lgn:
+            return x_btn.float() * self.lgn_input_scale
+        if self.encoding == "identity":
             return x_btn.float()
 
         x_btn = x_btn.float()

@@ -296,7 +296,9 @@ implementation at [ifgovh/Training-data-driven-V1-model](https://github.com/ifgo
 |------|-------|-----------|-----|
 | Optimizer | SGD + momentum, BPTT | AdamW + cosine, BPTT | Stable on single 4090; minor |
 | GPUs | 160 GPUs × 60 hours | 1× RTX 4090 24GB | Hardware budget |
-| `n_neurons` | 51,798 (full core) | 10,000 (random sub-core) | Memory budget |
+| `n_neurons` | 51,798 (full core) | 10,000–20,000 (random sub-core) | Memory budget |
+| `neurons_per_output` | 30 per spatially-localized L5 pool | 8–16 random L5e per pool (`localized_readout: false`) | Sub-core L5e density (~1500 at N=10k) is too low to populate spatial pools at radius 55; fall back to random L5e sampling |
+| LGN→V1 input units | Hz × W_in (continuous current) | (Hz / 1000) × W_in via `lgn_input_scale=1e-3` | Original code calibrates W_in for spike-per-ms inputs; raw Hz over-injects 1000× |
 | Precision | fp32 | bf16-mixed (fallback fp32) | Memory; falls back if NaN |
 | Tasks | 5-task joint training (320 trials/batch) | Single-task MNIST (effective batch 64 via accumulation) | This repo focuses on single-task strict reproduction |
 | Epochs | 16 (joint) | 16 (single-task) | Same training compute order |

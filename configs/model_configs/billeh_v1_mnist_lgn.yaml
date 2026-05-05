@@ -34,6 +34,10 @@ lgn_input_width: 240
 encoding: identity
 encoding_gain: 1.0
 
+# LGN outputs are firing rates in Hz. With dt=1 ms, multiply by 1e-3 to get
+# spikes/timestep (matches Billeh input weight calibration).
+lgn_input_scale: 1.0e-3
+
 # Spike surrogate / readout.
 dampening_factor: 0.3
 gauss_std: 0.5

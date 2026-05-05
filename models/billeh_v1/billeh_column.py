@@ -23,7 +23,16 @@ def spike_gauss(v_scaled, sigma, amplitude):
 
 
 def sparse_mm_batch(sparse_w, dense_x):
-    # sparse_w: [out, in], dense_x: [B, in]
+    # sparse_w: [out, in], dense_x: [B, in].
+    # `torch.sparse.mm` on CUDA does NOT implement bf16/fp16. Under
+    # bf16-mixed autocast, dense_x becomes bf16 while sparse_w stays fp32
+    # (parameters aren't autocasted), so we run the mm in fp32 and cast
+    # the result back to dense_x's dtype.
+    sw_dtype = sparse_w.dtype
+    if dense_x.dtype != sw_dtype:
+        with torch.amp.autocast(device_type=dense_x.device.type, enabled=False):
+            out = torch.sparse.mm(sparse_w, dense_x.t().to(sw_dtype)).t()
+        return out.to(dense_x.dtype)
     return torch.sparse.mm(sparse_w, dense_x.t()).t()
 
 

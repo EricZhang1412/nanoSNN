@@ -56,6 +56,7 @@ class BillehV1Classifier(nn.Module):
         self.gauss_std = float(getattr(model_config, "gauss_std", 0.5))
         self.chunk_size = int(getattr(model_config, "chunk_size", 0))
         self.neurons_per_output = int(getattr(model_config, "neurons_per_output", 30))
+        self.localized_readout = bool(getattr(model_config, "localized_readout", True))
 
         self.lgn = None
         if self.use_lgn:
@@ -79,17 +80,39 @@ class BillehV1Classifier(nn.Module):
         if not os.path.isdir(data_dir):
             raise FileNotFoundError(f"billeh_data_dir not found: {data_dir}")
 
-        loaded = load_billeh_torch(
-            n_input=self.n_input,
-            n_neurons=self.n_neurons,
-            core_only=not self.full_core,
-            data_dir=data_dir,
-            seed=self.seed,
-            connected_selection=self.full_core,
-            localized_readout=True,
-            neurons_per_output=self.neurons_per_output,
-            device="cpu",
-        )
+        try:
+            loaded = load_billeh_torch(
+                n_input=self.n_input,
+                n_neurons=self.n_neurons,
+                core_only=not self.full_core,
+                data_dir=data_dir,
+                seed=self.seed,
+                connected_selection=self.full_core,
+                localized_readout=self.localized_readout,
+                neurons_per_output=self.neurons_per_output,
+                device="cpu",
+            )
+        except ValueError as exc:
+            # Some reduced cores cannot populate all localized pools.
+            msg = str(exc)
+            if self.localized_readout and "No readout population" in msg:
+                print(
+                    "Warning: localized_readout failed due to small neuronal volume; "
+                    "falling back to global random readout."
+                )
+                loaded = load_billeh_torch(
+                    n_input=self.n_input,
+                    n_neurons=self.n_neurons,
+                    core_only=not self.full_core,
+                    data_dir=data_dir,
+                    seed=self.seed,
+                    connected_selection=self.full_core,
+                    localized_readout=False,
+                    neurons_per_output=self.neurons_per_output,
+                    device="cpu",
+                )
+            else:
+                raise
 
         bkg_weights = loaded["bkg_weights"]
         if isinstance(bkg_weights, torch.Tensor):

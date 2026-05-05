@@ -42,9 +42,12 @@ class TorchLGN(nn.Module):
         with open(temporal_kernels_path, "rb") as f:
             loaded = pkl.load(f)
 
-        self.register_buffer("spatial_sizes", torch.as_tensor(d["spatial_size"].to_numpy(), dtype=torch.float32))
-        self.register_buffer("x_raw", torch.as_tensor(d["x"].to_numpy(), dtype=torch.float32))
-        self.register_buffer("y_raw", torch.as_tensor(d["y"].to_numpy(), dtype=torch.float32))
+        self.register_buffer(
+            "spatial_sizes",
+            torch.as_tensor(d["spatial_size"].to_numpy(copy=True), dtype=torch.float32),
+        )
+        self.register_buffer("x_raw", torch.as_tensor(d["x"].to_numpy(copy=True), dtype=torch.float32))
+        self.register_buffer("y_raw", torch.as_tensor(d["y"].to_numpy(copy=True), dtype=torch.float32))
 
         self.register_buffer(
             "non_dominant_x_raw",

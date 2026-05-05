@@ -33,7 +33,14 @@ class BillehV1Classifier(nn.Module):
     def __init__(self, model_config):
         super().__init__()
         self.T = int(getattr(model_config, "T", 8))
-        self.n_input = int(getattr(model_config, "n_input", 17400))
+        self.auto_n_input_from_in_channels = bool(
+            getattr(model_config, "auto_n_input_from_in_channels", False)
+        )
+        in_channels = int(getattr(model_config, "in_channels", 1))
+        if self.auto_n_input_from_in_channels:
+            self.n_input = in_channels
+        else:
+            self.n_input = int(getattr(model_config, "n_input", 17400))
         self.n_neurons = int(getattr(model_config, "n_neurons", 1000))
         self.num_classes = int(getattr(model_config, "num_classes", 10))
         self.seed = int(getattr(model_config, "seed", 3000))
@@ -41,6 +48,8 @@ class BillehV1Classifier(nn.Module):
         self.train_v1 = bool(getattr(model_config, "train_v1", False))
         self.encoding = str(getattr(model_config, "encoding", "poisson")).lower()
         self.encoding_gain = float(getattr(model_config, "encoding_gain", 1.0))
+        # If true, keep temporal length from input instead of forcing model_config.T.
+        self.use_input_t = bool(getattr(model_config, "use_input_t", False))
 
         data_dir = str(getattr(model_config, "billeh_data_dir", "")).strip()
         if not data_dir:
@@ -81,7 +90,7 @@ class BillehV1Classifier(nn.Module):
     def _to_b_t_n(self, x: torch.Tensor) -> torch.Tensor:
         # [T, B, C, H, W] (static expanded temporal) -> [B, T, n_input]
         if x.ndim == 5:
-            if x.shape[0] != self.T:
+            if (not self.use_input_t) and x.shape[0] != self.T:
                 # Keep the first T frames for consistency with model setting.
                 t_keep = min(self.T, x.shape[0])
                 x = x[:t_keep]
@@ -91,7 +100,7 @@ class BillehV1Classifier(nn.Module):
             # already [B, T, n_input?]
             b, t = x.shape[:2]
             x = x.reshape(b, t, -1)
-            if t != self.T:
+            if (not self.use_input_t) and t != self.T:
                 t_keep = min(self.T, t)
                 x = x[:, :t_keep]
         else:
@@ -104,19 +113,26 @@ class BillehV1Classifier(nn.Module):
             x = F.interpolate(x, size=self.n_input, mode="linear", align_corners=False)
             x = x.reshape(bsz, tsz, self.n_input)
 
-        # Guarantee [B, T, n_input] with T=self.T.
-        if x.shape[1] < self.T:
-            repeat_n = self.T - x.shape[1]
-            x = torch.cat([x, x[:, -1:, :].repeat(1, repeat_n, 1)], dim=1)
-        elif x.shape[1] > self.T:
-            x = x[:, : self.T, :]
+        # By default, guarantee [B, T, n_input] with T=self.T.
+        # When use_input_t=True, temporal length is kept as provided by input.
+        if not self.use_input_t:
+            if x.shape[1] < self.T:
+                repeat_n = self.T - x.shape[1]
+                x = torch.cat([x, x[:, -1:, :].repeat(1, repeat_n, 1)], dim=1)
+            elif x.shape[1] > self.T:
+                x = x[:, : self.T]
         return x
 
     def _encode(self, x_btn: torch.Tensor) -> torch.Tensor:
+        if self.encoding == "identity":
+            return x_btn.float()
+
         # Input to V1 is expected in [0,1]-like range.
         x_btn = x_btn.float()
-        x_btn = x_btn - x_btn.amin(dim=-1, keepdim=True)
-        denom = x_btn.amax(dim=-1, keepdim=True).clamp_min(1e-6)
+        # For 1-D per-step features (n_input==1), normalize over time to avoid all-zero collapse.
+        norm_dim = 1 if x_btn.shape[-1] == 1 else -1
+        x_btn = x_btn - x_btn.amin(dim=norm_dim, keepdim=True)
+        denom = x_btn.amax(dim=norm_dim, keepdim=True).clamp_min(1e-6)
         x_btn = x_btn / denom
 
         if self.encoding == "repeat":

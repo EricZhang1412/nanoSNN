@@ -1,4 +1,4 @@
-batch_size_per_gpu: 640
+batch_size_per_gpu: 16
 random_seed: 42
 limit_train_batches: null
 
@@ -8,7 +8,7 @@ trainer:
   max_epochs: 100
   gradient_clip_val: 1.0
   gradient_clip_algorithm: norm
-  log_every_n_steps: 20
+  log_every_n_steps: 10
   check_val_every_n_epoch: 1
   val_check_interval: 1.0
   enable_checkpointing: true

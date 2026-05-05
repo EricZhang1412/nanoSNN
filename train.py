@@ -148,6 +148,7 @@ def train(args):
         rank_zero_info("Training from scratch.")
 
     trainer.fit(lit_model, datamodule=datamodule, ckpt_path=ckpt_path)
+    trainer.test(lit_model, datamodule=datamodule, ckpt_path="best")
 
 
 if __name__ == "__main__":

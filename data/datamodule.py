@@ -42,7 +42,8 @@ class VisionDataModule(L.LightningDataModule):
         )
 
     def train_dataloader(self):
-        return DataLoader(self.train_dataset, **self._loader_kwargs(shuffle=True, drop_last=True))
+        train_drop_last = bool(getattr(self.data_config, "train_drop_last", True))
+        return DataLoader(self.train_dataset, **self._loader_kwargs(shuffle=True, drop_last=train_drop_last))
 
     def val_dataloader(self):
         return DataLoader(self.val_dataset, **self._loader_kwargs(shuffle=False, drop_last=False))

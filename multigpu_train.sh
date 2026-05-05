@@ -2,15 +2,15 @@
 # Multi-GPU / multi-node training script (DDP via torchrun)
 # Usage: bash multigpu_train.sh [model_config] [data_config] [gpus_per_node] [num_nodes]
 # Example: bash multigpu_train.sh spiking_resnet18 imagenet 8 1
-export CUDA_VISIBLE_DEVICES=1,2,3,4,5,6
+export CUDA_VISIBLE_DEVICES=0,1,5,6
 
 PROJECT=${1:-default_project_configs}
 TRAINING=${2:-billeh_mnist}
-MODEL=${3:-billeh_v1_mnist}
-DATA=${4:-mnist}
+MODEL=${3:-billeh_v1_seqmnist}
+DATA=${4:-sequential_mnist}
 OPTIMIZER=${5:-billeh_mnist}
 
-GPUS=${6:-6}
+GPUS=${6:-4}
 NODES=${7:-1}
 PORT=${8:-29502}
 

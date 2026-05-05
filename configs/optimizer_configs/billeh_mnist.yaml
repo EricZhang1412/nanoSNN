@@ -1,7 +1,7 @@
-lr: 5e-3
+lr: 3e-4
 beta1: 0.9
 beta2: 0.999
 weight_decay: 0.01
 scheduler: cosine
-warmup_epochs: 2
+warmup_epochs: 5
 min_lr_ratio: 0.1

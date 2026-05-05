@@ -1,0 +1,17 @@
+name: billeh_v1
+T: 784
+num_classes: 10
+in_channels: 1
+
+# Billeh V1 backbone setup
+billeh_data_dir: /data2/dataset/LGN_GLIF_Models/preprocessed/GLIF_network
+n_neurons: 5000 # max=51798
+full_core: false
+train_v1: true
+seed: 3407
+use_input_t: true
+auto_n_input_from_in_channels: true
+
+# input -> temporal current/spike encoding
+encoding: repeat   # repeat | poisson | identity
+encoding_gain: 1.0

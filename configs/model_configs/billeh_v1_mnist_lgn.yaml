@@ -16,7 +16,7 @@ auto_n_input_from_in_channels: false
 use_lgn: true
 auto_n_input_from_lgn: true
 lgn_data_path: /data2/dataset/LGN_GLIF_Models/new_0505/GLIF_network2/lgn_full_col_cells_3.csv
-lgn_temporal_kernels_path: /path/to/temporal_kernels.pkl
+lgn_temporal_kernels_path: /data2/dataset/LGN_GLIF_Models/new_0505/GLIF_network2/temporal_kernels.pkl
 
 # If use_lgn=true and input is [B, T, H*W], set these for reshape.
 lgn_input_height: 0

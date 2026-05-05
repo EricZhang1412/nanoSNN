@@ -1,1 +1,1 @@
-output_dir: ./exp/outputs-sequential-mnist
+output_dir: ./exp/outputs-lgn-mnist

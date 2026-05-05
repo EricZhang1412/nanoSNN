@@ -6,6 +6,8 @@ import os
 import shutil
 import sys
 
+import numpy as np
+
 
 def _load_module_from_path(module_name: str, py_path: str):
     spec = importlib.util.spec_from_file_location(module_name, py_path)
@@ -41,7 +43,52 @@ def _parse_args():
         action="store_true",
         help="Re-generate even if output file already exists.",
     )
+    parser.add_argument(
+        "--bmtk_root",
+        type=str,
+        default=None,
+        help="Preferred bmtk source root (directory containing 'bmtk/' package).",
+    )
     return parser.parse_args()
+
+
+def _prepend_bmtk_root(bmtk_root: str | None):
+    if not bmtk_root:
+        return None
+    root = os.path.abspath(os.path.expanduser(bmtk_root))
+    pkg_dir = os.path.join(root, "bmtk")
+    if not os.path.isdir(pkg_dir):
+        raise FileNotFoundError(f"Invalid --bmtk_root, expected {pkg_dir} to exist.")
+    if root in sys.path:
+        sys.path.remove(root)
+    sys.path.insert(0, root)
+    return root
+
+
+def _check_lgn_csv_compat(lgn_data_path: str):
+    with open(lgn_data_path, "r", encoding="utf-8") as f:
+        header = f.readline().strip()
+    cols = header.split()
+    required = {"spatial_size", "model_id", "x", "y"}
+    if required.issubset(set(cols)):
+        return
+    hint = ""
+    if {"model_id", "level_of_detail"}.issubset(set(cols)):
+        hint = " It looks like you passed '...cell_models_3.csv'. Please use '...cells_3.csv' instead."
+    raise ValueError(
+        "lgn_data_path is not compatible with original lgn.py. "
+        f"Missing required columns: {sorted(required - set(cols))}.{hint}"
+    )
+
+
+def _patch_numpy_legacy_aliases():
+    """
+    Compatibility shim for legacy code using removed aliases such as np.float/np.int.
+    """
+    if not hasattr(np, "float"):
+        np.float = float  # type: ignore[attr-defined]
+    if not hasattr(np, "int"):
+        np.int = int  # type: ignore[attr-defined]
 
 
 def main():
@@ -52,6 +99,7 @@ def main():
         raise FileNotFoundError(f"lgn.py not found: {lgn_py}")
     if not os.path.isfile(lgn_data_path):
         raise FileNotFoundError(f"lgn_data_path not found: {lgn_data_path}")
+    _check_lgn_csv_compat(lgn_data_path)
 
     default_cache = os.path.join(os.path.dirname(lgn_py), "temporal_kernels.pkl")
     output = default_cache if args.output is None else os.path.abspath(os.path.expanduser(args.output))
@@ -59,6 +107,19 @@ def main():
     if os.path.isfile(output) and not args.force:
         print(f"[prepare_lgn_kernels] Found existing cache: {output}")
         return
+
+    _patch_numpy_legacy_aliases()
+
+    # Prefer user-specified bmtk root first. If not specified, try sibling
+    # repository layout: <repo_root>/3rdparty/bmtk relative to lgn.py.
+    effective_bmtk = args.bmtk_root
+    if not effective_bmtk:
+        candidate = os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(lgn_py)), "3rdparty", "bmtk"))
+        if os.path.isdir(os.path.join(candidate, "bmtk")):
+            effective_bmtk = candidate
+    added_bmtk = _prepend_bmtk_root(effective_bmtk)
+    if added_bmtk:
+        print(f"[prepare_lgn_kernels] Using bmtk root: {added_bmtk}")
 
     print(f"[prepare_lgn_kernels] Importing original LGN from: {lgn_py}")
     lgn_module = _load_module_from_path("external_lgn_module", lgn_py)

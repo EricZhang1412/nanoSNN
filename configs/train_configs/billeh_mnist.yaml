@@ -1,4 +1,4 @@
-batch_size_per_gpu: 40
+batch_size_per_gpu: 360
 random_seed: 42
 limit_train_batches: null
 

@@ -11,8 +11,8 @@ down_sample: 50
 
 # Billeh V1 backbone setup
 billeh_data_dir: /data2/dataset/LGN_GLIF_Models/new_0505/GLIF_network2
-n_neurons: 10000          # max=51798; need ≥~3000 L5e for 15 readout pools at neurons_per_output=30
-neurons_per_output: 8   # paper uses ~30 L5e neurons per readout pool
+n_neurons: 3000          # max=51798; need ≥~3000 L5e for 15 readout pools at neurons_per_output=30
+neurons_per_output: 30   # paper uses ~30 L5e neurons per readout pool
 localized_readout: false  # fallback-safe on reduced core volumes
 full_core: false
 train_v1: true

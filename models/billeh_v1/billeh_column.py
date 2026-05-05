@@ -24,16 +24,40 @@ def spike_gauss(v_scaled, sigma, amplitude):
 
 def sparse_mm_batch(sparse_w, dense_x):
     # sparse_w: [out, in], dense_x: [B, in].
-    # `torch.sparse.mm` on CUDA does NOT implement bf16/fp16. Under
-    # bf16-mixed autocast, dense_x becomes bf16 while sparse_w stays fp32
-    # (parameters aren't autocasted), so we run the mm in fp32 and cast
-    # the result back to dense_x's dtype.
-    sw_dtype = sparse_w.dtype
-    if dense_x.dtype != sw_dtype:
-        with torch.amp.autocast(device_type=dense_x.device.type, enabled=False):
-            out = torch.sparse.mm(sparse_w, dense_x.t().to(sw_dtype)).t()
-        return out.to(dense_x.dtype)
-    return torch.sparse.mm(sparse_w, dense_x.t()).t()
+    #
+    # CUDA sparse addmm path (`torch.sparse.mm`) is not implemented for bf16.
+    # Implement a mixed-precision-safe sparse mm via chunked gather + index_add.
+    # This keeps gradients for both dense_x and sparse values, and runs on CUDA.
+    sp = sparse_w.coalesce()
+    idx = sp.indices()
+    row = idx[0]
+    col = idx[1]
+    val = sp.values()
+
+    bsz = dense_x.shape[0]
+    out_features = int(sp.shape[0])
+    nnz = int(val.numel())
+
+    out_dtype = dense_x.dtype
+    compute_dtype = torch.float32
+
+    with torch.amp.autocast(device_type=dense_x.device.type, enabled=False):
+        x = dense_x.to(compute_dtype)
+        v = val.to(compute_dtype)
+        out_t = x.new_zeros((out_features, bsz))
+
+        # Avoid materializing [B, nnz] at once (can be huge for V1 connectivity).
+        chunk_nnz = 200_000
+        for start in range(0, nnz, chunk_nnz):
+            end = min(start + chunk_nnz, nnz)
+            row_i = row[start:end]
+            col_i = col[start:end]
+            val_i = v[start:end]
+            weighted = x[:, col_i] * val_i.unsqueeze(0)  # [B, chunk]
+            out_t.index_add_(0, row_i, weighted.t())
+
+        out = out_t.t()
+    return out.to(out_dtype)
 
 
 def make_sparse(indices, weights, shape, device):

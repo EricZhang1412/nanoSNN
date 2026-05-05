@@ -1,4 +1,4 @@
-batch_size_per_gpu: 16
+batch_size_per_gpu: 40
 random_seed: 42
 limit_train_batches: null     # set to 0.05 for a 5% 1-epoch smoke run
 

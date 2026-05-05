@@ -6,8 +6,8 @@ export CUDA_VISIBLE_DEVICES=0,1,2,4,5,6
 
 PROJECT=${1:-default_project_configs}
 TRAINING=${2:-billeh_mnist}
-MODEL=${3:-billeh_v1_seqmnist}
-DATA=${4:-sequential_mnist}
+MODEL=${3:-billeh_v1_mnist_lgn}
+DATA=${4:-billeh_mnist_lgn}
 OPTIMIZER=${5:-billeh_mnist}
 
 GPUS=${6:-6}

@@ -86,6 +86,17 @@ class LitVisionSNN(L.LightningModule):
                  on_epoch=True, sync_dist=sync)
         if num_classes >= 5:
             self.log(f"{split}/top5", accs["top5"], on_step=False, on_epoch=True, sync_dist=sync)
+
+        spike_rate_hz = getattr(self.model, "latest_spike_rate_hz", None)
+        if spike_rate_hz is not None:
+            self.log(
+                f"{split}/spike_rate_hz",
+                spike_rate_hz,
+                prog_bar=(split != "train"),
+                on_step=(split == "train"),
+                on_epoch=True,
+                sync_dist=sync,
+            )
         return loss
 
     def training_step(self, batch, batch_idx: int):

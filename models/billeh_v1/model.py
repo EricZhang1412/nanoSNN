@@ -71,6 +71,7 @@ class BillehV1Classifier(nn.Module):
             device="cpu",
         )
         self.readout = RateReadout(self.n_neurons, self.num_classes)
+        self.latest_spike_rate_hz: torch.Tensor | None = None
 
         if not self.train_v1:
             self.v1.eval()
@@ -134,4 +135,6 @@ class BillehV1Classifier(nn.Module):
         else:
             with torch.no_grad():
                 spikes, _, _ = self.v1(x_btn)
+        # Mean spike probability -> Hz (dt=1 ms => *1000).
+        self.latest_spike_rate_hz = spikes.float().mean() * 1000.0
         return self.readout(spikes)

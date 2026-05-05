@@ -1,0 +1,19 @@
+name: billeh_mnist_lgn
+root: /data2/users/zhangjy/Training-data-driven-V1-model/data/mnist
+num_classes: 10
+image_size: 28
+in_channels: 1
+is_event: true            # collate transposes to [T, B, C, H, W]
+download: true
+num_workers: 2
+pin_memory: true
+
+# Movie composition: T = pre_delay + im_slice + post_delay.
+seq_len: 600
+pre_delay: 50
+post_delay: 450
+sti_intensity: 2.0
+
+# LGN retinotopic field size (must match model_config.lgn_input_*).
+lgn_height: 120
+lgn_width: 240

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -10,22 +11,13 @@ from ..common.registry import register_model
 from .billeh_column import BillehColumnTorch
 from .lgn_torch import TorchLGN
 from .load_sparse_torch import load_billeh_torch
-
-
-class RateReadout(nn.Module):
-    def __init__(self, n_neurons: int, n_classes: int):
-        super().__init__()
-        self.fc = nn.Linear(n_neurons, n_classes)
-
-    def forward(self, spikes: torch.Tensor) -> torch.Tensor:
-        rates = spikes.float().mean(dim=1)
-        return self.fc(rates)
+from .pool_readout import LocalizedPoolReadout
 
 
 @register_model("billeh_v1")
 class BillehV1Classifier(nn.Module):
     """
-    V1 GLIF backbone + linear rate readout for classification.
+    V1 GLIF backbone + localized L5 pool readout for Chen-Maass-style classification.
     Input supports:
       - static expanded temporal: [T, B, C, H, W]
       - direct temporal current/spike-like: [B, T, n_input]
@@ -33,7 +25,7 @@ class BillehV1Classifier(nn.Module):
 
     def __init__(self, model_config):
         super().__init__()
-        self.T = int(getattr(model_config, "T", 8))
+        self.T = int(getattr(model_config, "T", 600))
         self.auto_n_input_from_in_channels = bool(
             getattr(model_config, "auto_n_input_from_in_channels", False)
         )
@@ -46,8 +38,8 @@ class BillehV1Classifier(nn.Module):
         self.num_classes = int(getattr(model_config, "num_classes", 10))
         self.seed = int(getattr(model_config, "seed", 3000))
         self.full_core = bool(getattr(model_config, "full_core", False))
-        self.train_v1 = bool(getattr(model_config, "train_v1", False))
-        self.encoding = str(getattr(model_config, "encoding", "poisson")).lower()
+        self.train_v1 = bool(getattr(model_config, "train_v1", True))
+        self.encoding = str(getattr(model_config, "encoding", "identity")).lower()
         self.encoding_gain = float(getattr(model_config, "encoding_gain", 1.0))
         # If true, keep temporal length from input instead of forcing model_config.T.
         self.use_input_t = bool(getattr(model_config, "use_input_t", False))
@@ -55,15 +47,29 @@ class BillehV1Classifier(nn.Module):
         self.lgn_input_height = int(getattr(model_config, "lgn_input_height", 0) or 0)
         self.lgn_input_width = int(getattr(model_config, "lgn_input_width", 0) or 0)
 
+        # Strict-reproduction trial timing.
+        self.pre_delay = int(getattr(model_config, "pre_delay", 0))
+        self.post_delay = int(getattr(model_config, "post_delay", 0))
+        self.response_window_len = int(getattr(model_config, "response_window_len", 0))
+        self.down_sample = int(getattr(model_config, "down_sample", 0))
+        self.dampening_factor = float(getattr(model_config, "dampening_factor", 0.3))
+        self.gauss_std = float(getattr(model_config, "gauss_std", 0.5))
+        self.chunk_size = int(getattr(model_config, "chunk_size", 0))
+        self.neurons_per_output = int(getattr(model_config, "neurons_per_output", 30))
+
         self.lgn = None
         if self.use_lgn:
             lgn_data_path = str(getattr(model_config, "lgn_data_path", "")).strip()
-            lgn_temporal_kernels_path = str(getattr(model_config, "lgn_temporal_kernels_path", "")).strip() or None
+            lgn_temporal_kernels_path = str(
+                getattr(model_config, "lgn_temporal_kernels_path", "")
+            ).strip() or None
             self.lgn = TorchLGN(
                 lgn_data_path=lgn_data_path,
                 temporal_kernels_path=lgn_temporal_kernels_path,
             )
-            auto_n_input_from_lgn = bool(getattr(model_config, "auto_n_input_from_lgn", True))
+            auto_n_input_from_lgn = bool(
+                getattr(model_config, "auto_n_input_from_lgn", True)
+            )
             if auto_n_input_from_lgn:
                 self.n_input = int(self.lgn.n_cells)
 
@@ -80,8 +86,8 @@ class BillehV1Classifier(nn.Module):
             data_dir=data_dir,
             seed=self.seed,
             connected_selection=self.full_core,
-            localized_readout=False,
-            neurons_per_output=4,
+            localized_readout=True,
+            neurons_per_output=self.neurons_per_output,
             device="cpu",
         )
 
@@ -93,15 +99,56 @@ class BillehV1Classifier(nn.Module):
             loaded["network"],
             loaded["input_population"],
             bkg_weights,
+            gauss_std=self.gauss_std,
+            dampening_factor=self.dampening_factor,
+            chunk_size=self.chunk_size,
             device="cpu",
         )
-        self.readout = RateReadout(self.n_neurons, self.num_classes)
-        self.latest_spike_rate_hz: torch.Tensor | None = None
 
-        if not self.train_v1:
-            self.v1.eval()
-            for p in self.v1.parameters():
-                p.requires_grad_(False)
+        # Pool ids: upstream uses pools 5..14 for the 10-class task (skip 0..4
+        # reserved for the garrett 2-class task).
+        network = loaded["network"]
+        pool_ids = []
+        for i in range(self.num_classes):
+            key = f"localized_readout_neuron_ids_{i + 5}"
+            if key not in network:
+                # fall back to pools 0..(num_classes-1) if 5..14 are unavailable
+                key = f"localized_readout_neuron_ids_{i}"
+            ids = np.asarray(network[key]).reshape(-1)
+            pool_ids.append(ids)
+
+        self.readout = LocalizedPoolReadout(
+            pool_ids=pool_ids,
+            dampening_factor=self.dampening_factor,
+            down_sample=self.down_sample if self.down_sample > 0 else self.T,
+            n_classes=self.num_classes,
+        )
+
+        # Response-window chunk mask.
+        if self.down_sample > 0 and self.T % self.down_sample == 0:
+            n_chunks = self.T // self.down_sample
+            im_slice = self.T - self.pre_delay - self.post_delay
+            if im_slice <= 0:
+                # No timing structure → use all chunks for inference.
+                mask = torch.ones(n_chunks, dtype=torch.float32)
+            else:
+                resp_start_bin = self.pre_delay // self.down_sample
+                resp_end_step = self.pre_delay + im_slice + self.response_window_len
+                resp_end_bin = (resp_end_step + self.down_sample - 1) // self.down_sample
+                resp_end_bin = min(resp_end_bin, n_chunks)
+                mask = torch.zeros(n_chunks, dtype=torch.float32)
+                mask[resp_start_bin:resp_end_bin] = 1.0
+                if mask.sum() == 0:
+                    mask[:] = 1.0
+        else:
+            mask = torch.ones(1, dtype=torch.float32)
+        self.register_buffer("_resp_chunk_mask", mask)
+
+        # Stash slots filled by forward() for the loss step.
+        self.last_spikes: torch.Tensor | None = None
+        self.last_v_norm: torch.Tensor | None = None
+        self.last_logits_chunks: torch.Tensor | None = None
+        self.latest_spike_rate_hz: torch.Tensor | None = None
 
     def _to_b_t_n(self, x: torch.Tensor) -> torch.Tensor:
         if self.use_lgn:
@@ -110,13 +157,11 @@ class BillehV1Classifier(nn.Module):
         # [T, B, C, H, W] (static expanded temporal) -> [B, T, n_input]
         if x.ndim == 5:
             if (not self.use_input_t) and x.shape[0] != self.T:
-                # Keep the first T frames for consistency with model setting.
                 t_keep = min(self.T, x.shape[0])
                 x = x[:t_keep]
             t, b = x.shape[0], x.shape[1]
             x = x.permute(1, 0, 2, 3, 4).reshape(b, t, -1)
         elif x.ndim == 3:
-            # already [B, T, n_input?]
             b, t = x.shape[:2]
             x = x.reshape(b, t, -1)
             if (not self.use_input_t) and t != self.T:
@@ -125,15 +170,12 @@ class BillehV1Classifier(nn.Module):
         else:
             raise ValueError(f"Unsupported input shape for billeh_v1: {tuple(x.shape)}")
 
-        # Resize feature dim to n_input if needed.
         if x.shape[-1] != self.n_input:
             bsz, tsz = x.shape[0], x.shape[1]
             x = x.reshape(bsz * tsz, 1, x.shape[-1])
             x = F.interpolate(x, size=self.n_input, mode="linear", align_corners=False)
             x = x.reshape(bsz, tsz, self.n_input)
 
-        # By default, guarantee [B, T, n_input] with T=self.T.
-        # When use_input_t=True, temporal length is kept as provided by input.
         if not self.use_input_t:
             if x.shape[1] < self.T:
                 repeat_n = self.T - x.shape[1]
@@ -157,7 +199,6 @@ class BillehV1Classifier(nn.Module):
             # [B, C, H, W] -> [B, T=1, H, W]
             movie = x.mean(dim=1, keepdim=False).unsqueeze(1)
         elif x.ndim == 3:
-            # Optional reshape path for sequence-like input: [B, T, H*W]
             h = int(getattr(self, "lgn_input_height", 0) or 0)
             w = int(getattr(self, "lgn_input_width", 0) or 0)
             if h <= 0 or w <= 0:
@@ -171,13 +212,8 @@ class BillehV1Classifier(nn.Module):
             raise ValueError(f"Unsupported input shape for LGN path: {tuple(x.shape)}")
 
         x_btn = self.lgn(movie)
-        if not self.use_input_t:
-            if x_btn.shape[1] < self.T:
-                repeat_n = self.T - x_btn.shape[1]
-                x_btn = torch.cat([x_btn, x_btn[:, -1:, :].repeat(1, repeat_n, 1)], dim=1)
-            elif x_btn.shape[1] > self.T:
-                x_btn = x_btn[:, : self.T]
-
+        # Strict reproduction: dataset is responsible for assembling the full
+        # [pre + im_slice + post] movie; do NOT pad or truncate here.
         if x_btn.shape[-1] != self.n_input:
             bsz, tsz = x_btn.shape[0], x_btn.shape[1]
             x_btn = x_btn.reshape(bsz * tsz, 1, x_btn.shape[-1])
@@ -186,12 +222,12 @@ class BillehV1Classifier(nn.Module):
         return x_btn
 
     def _encode(self, x_btn: torch.Tensor) -> torch.Tensor:
-        if self.encoding == "identity":
+        # On the LGN path, x_btn carries firing rates in Hz; pass them to V1
+        # as continuous currents (no Bernoulli/Poisson resampling, no rescale).
+        if self.use_lgn or self.encoding == "identity":
             return x_btn.float()
 
-        # Input to V1 is expected in [0,1]-like range.
         x_btn = x_btn.float()
-        # For 1-D per-step features (n_input==1), normalize over time to avoid all-zero collapse.
         norm_dim = 1 if x_btn.shape[-1] == 1 else -1
         x_btn = x_btn - x_btn.amin(dim=norm_dim, keepdim=True)
         denom = x_btn.amax(dim=norm_dim, keepdim=True).clamp_min(1e-6)
@@ -204,15 +240,31 @@ class BillehV1Classifier(nn.Module):
             return (torch.rand_like(p) < p).float()
         raise ValueError(f"Unknown encoding: {self.encoding}")
 
+    def _collapse_chunks_for_inference(self, logits_chunks: torch.Tensor) -> torch.Tensor:
+        # Average response-window chunks only.
+        if self._resp_chunk_mask is None or self._resp_chunk_mask.numel() != logits_chunks.shape[1]:
+            return logits_chunks.mean(dim=1)
+        m = self._resp_chunk_mask.to(logits_chunks.device).view(1, -1, 1)
+        return (logits_chunks * m).sum(dim=1) / m.sum().clamp_min(1)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x_btn = self._to_b_t_n(x)
         x_btn = self._encode(x_btn)
         self.v1.device = x_btn.device
-        if self.train_v1:
-            spikes, _, _ = self.v1(x_btn)
-        else:
-            with torch.no_grad():
-                spikes, _, _ = self.v1(x_btn)
-        # Mean spike probability -> Hz (dt=1 ms => *1000).
-        self.latest_spike_rate_hz = spikes.float().mean() * 1000.0
-        return self.readout(spikes)
+        spikes, v_mV, _ = self.v1(x_btn)
+
+        # Convert v to normalized voltage for downstream regularization.
+        vs_scale = self.v1.voltage_scale[None, None, :]
+        vo_scale = self.v1.voltage_offset[None, None, :]
+        v_norm = (v_mV - vo_scale) / vs_scale.clamp_min(1e-6)
+
+        logits_chunks = self.readout(spikes)
+
+        # Stash for the Lightning loss step.
+        self.last_spikes = spikes
+        self.last_v_norm = v_norm
+        self.last_logits_chunks = logits_chunks
+        # Population mean rate Hz for logging (detached).
+        self.latest_spike_rate_hz = spikes.detach().float().mean() * 1000.0
+
+        return self._collapse_chunks_for_inference(logits_chunks)

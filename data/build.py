@@ -34,6 +34,7 @@ def infer_num_classes(data_config, dataset=None) -> int:
     name = _dataset_name(data_config)
     fallback = {
         "mnist": 10,
+        "billeh_mnist_lgn": 10,
         "cifar10": 10,
         "cifar10dvs": 10,
         "cifar100": 100,

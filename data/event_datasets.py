@@ -5,15 +5,83 @@ import os
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from torch.utils.data import Dataset, Subset, random_split
 from torchvision import datasets
+from torchvision.transforms import functional as TF
 from spikingjelly.datasets.cifar10_dvs import CIFAR10DVS
 from spikingjelly.datasets.dvs128_gesture import DVS128Gesture
 
 from .transforms import build_event_transform
 
 
-EVENT_DATASETS = {"cifar10dvs", "dvs128gesture", "ucr", "sequential_mnist", "seqmnist"}
+EVENT_DATASETS = {
+    "cifar10dvs",
+    "dvs128gesture",
+    "ucr",
+    "sequential_mnist",
+    "seqmnist",
+    "billeh_mnist_lgn",
+}
+
+
+class BillehMNISTMovieDataset(Dataset):
+    """
+    Strict-reproduction MNIST front-end for Chen-Maass V1+LGN.
+
+    Each sample is a [T, 1, H, W] float movie:
+      - First ``pre_delay`` frames are zeros.
+      - Next ``im_slice = T - pre_delay - post_delay`` frames are the MNIST
+        image rescaled to (H, W) and shifted to ``[-sti_intensity, +sti_intensity]``.
+      - Last ``post_delay`` frames are zeros.
+
+    Returns (movie[T, 1, H, W], label).
+    """
+
+    def __init__(
+        self,
+        root: str,
+        train: bool,
+        lgn_h: int = 120,
+        lgn_w: int = 240,
+        seq_len: int = 600,
+        pre_delay: int = 50,
+        post_delay: int = 450,
+        sti_intensity: float = 2.0,
+        download: bool = True,
+    ):
+        super().__init__()
+        self.mnist = datasets.MNIST(root=root, train=train, download=download)
+        self.h = int(lgn_h)
+        self.w = int(lgn_w)
+        self.T = int(seq_len)
+        self.pre = int(pre_delay)
+        self.post = int(post_delay)
+        self.sti = float(sti_intensity)
+        self.im_slice = self.T - self.pre - self.post
+        if self.im_slice <= 0:
+            raise ValueError(
+                f"im_slice must be positive: T={self.T}, pre={self.pre}, post={self.post}"
+            )
+
+    def __len__(self):
+        return len(self.mnist)
+
+    def __getitem__(self, idx):
+        img, y = self.mnist[idx]
+        img = TF.to_tensor(img).float()  # [1, 28, 28] in [0,1]
+        if img.shape[-2] != self.h or img.shape[-1] != self.w:
+            img = F.interpolate(
+                img.unsqueeze(0),
+                size=(self.h, self.w),
+                mode="bilinear",
+                align_corners=False,
+            ).squeeze(0)
+        img = (img - 0.5) * (self.sti / 0.5)  # → [-sti, +sti]
+
+        movie = torch.zeros(self.T, 1, self.h, self.w, dtype=torch.float32)
+        movie[self.pre : self.pre + self.im_slice] = img.unsqueeze(0)
+        return movie, int(y)
 
 
 class TransformSubset(Dataset):
@@ -243,6 +311,21 @@ def build_event_dataset(data_config, split: str):
             normalize_to_01=normalize_to_01,
             download=download,
             patch_size=patch_size,
+        )
+
+    if name == "billeh_mnist_lgn":
+        # Map split: train→train, val/test→test (MNIST has no val split).
+        is_train = split == "train"
+        return BillehMNISTMovieDataset(
+            root=root,
+            train=is_train,
+            lgn_h=int(getattr(data_config, "lgn_height", 120)),
+            lgn_w=int(getattr(data_config, "lgn_width", 240)),
+            seq_len=int(getattr(data_config, "seq_len", 600)),
+            pre_delay=int(getattr(data_config, "pre_delay", 50)),
+            post_delay=int(getattr(data_config, "post_delay", 450)),
+            sti_intensity=float(getattr(data_config, "sti_intensity", 2.0)),
+            download=bool(getattr(data_config, "download", True)),
         )
 
     raise ValueError(f"Unsupported event dataset: {name}")

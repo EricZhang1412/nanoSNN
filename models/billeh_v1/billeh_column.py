@@ -2,6 +2,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.utils.checkpoint as ckpt
 
 
 class SpikeGauss(torch.autograd.Function):
@@ -50,12 +51,14 @@ class BillehColumnTorch(nn.Module):
         train_input=True,
         train_bkg=False,
         use_dale_law=True,
+        chunk_size=0,
         device="cpu",
     ):
         super().__init__()
         self.device = torch.device(device)
         self.dt = float(dt)
         self.use_dale_law = use_dale_law
+        self.chunk_size = int(chunk_size)
 
         params = network["node_params"]
         self.n_neurons = int(network["n_nodes"])
@@ -240,15 +243,11 @@ class BillehColumnTorch(nn.Module):
         v_out = new_v * self.voltage_scale[None, :] + self.voltage_offset[None, :]
         return (new_z, v_out), new_state
 
-    def forward(self, x, state=None, input_is_current=False):
-        # x: [B, T, n_lgn] if input_is_current=False
-        # x: [B, T, 4*n_neurons] if input_is_current=True
-        B, T = x.shape[:2]
-        if state is None:
-            state = self.zero_state(B)
-
+    def _run_range(self, x, state, input_is_current):
+        # x: [B, T_chunk, n_lgn] or [B, T_chunk, n_neurons*R]
+        B, T_chunk = x.shape[:2]
         zs, vs = [], []
-        for t in range(T):
+        for t in range(T_chunk):
             if input_is_current:
                 current_t = x[:, t]
             else:
@@ -264,3 +263,45 @@ class BillehColumnTorch(nn.Module):
             vs.append(v)
 
         return torch.stack(zs, dim=1), torch.stack(vs, dim=1), state
+
+    def _run_range_for_ckpt(self, x_chunk, input_is_current, *state_flat):
+        state = tuple(state_flat)
+        z_chunk, v_chunk, new_state = self._run_range(x_chunk, state, input_is_current)
+        # checkpoint can't return tuple-of-tuple; flatten state
+        return (z_chunk, v_chunk, *new_state)
+
+    def forward(self, x, state=None, input_is_current=False):
+        # x: [B, T, n_lgn] if input_is_current=False
+        # x: [B, T, 4*n_neurons] if input_is_current=True
+        B, T = x.shape[:2]
+        if state is None:
+            state = self.zero_state(B)
+
+        cs = int(self.chunk_size)
+        if (not self.training) or cs <= 0 or cs >= T:
+            return self._run_range(x, state, input_is_current)
+
+        # checkpoint requires at least one input tensor to require grad to actually
+        # save activations — make the leaf zero-state tensors require grad so
+        # autograd treats the chunk boundaries as grad-bearing nodes.
+        state = tuple(
+            s.detach().requires_grad_(True) if torch.is_floating_point(s) and not s.requires_grad else s
+            for s in state
+        )
+
+        z_chunks, v_chunks = [], []
+        for s_idx in range(0, T, cs):
+            e_idx = min(s_idx + cs, T)
+            outs = ckpt.checkpoint(
+                self._run_range_for_ckpt,
+                x[:, s_idx:e_idx],
+                input_is_current,
+                *state,
+                use_reentrant=False,
+            )
+            z_chunk, v_chunk = outs[0], outs[1]
+            state = tuple(outs[2:])
+            z_chunks.append(z_chunk)
+            v_chunks.append(v_chunk)
+
+        return torch.cat(z_chunks, dim=1), torch.cat(v_chunks, dim=1), state

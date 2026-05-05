@@ -263,6 +263,89 @@ uv run python train.py \
 uv run bash multigpu_train.sh spiking_resnet18 imagenet 8 1
 ```
 
+## Strict Reproduction: Chen-Scherr-Maass V1+LGN MNIST
+
+The `billeh_v1` model implements a strict-reproduction pipeline for the MNIST
+experiment in Chen, Scherr, Maass, *A Data-Based Large-Scale Model for Primary
+Visual Cortex Enables Brain-like Robust and Versatile Visual Processing*,
+Sci. Adv. 8, eabq7592 (2022). The settings are aligned with the upstream
+implementation at [ifgovh/Training-data-driven-V1-model](https://github.com/ifgovh/Training-data-driven-V1-model).
+
+### Aligned settings
+
+- Trial timing: `T = 600 ms`, `dt = 1 ms`, `pre_delay = 50`, `post_delay = 450`
+  (image stimulus shown for `T - pre - post = 100 ms`).
+- LGN front-end: 17,400-cell time-space filter bank on a 240×120 retinotopic field.
+- Pixel scaling: `(x - 0.5) * sti_intensity / 0.5` with `sti_intensity = 2.0`.
+- Neuron model: GLIF3 (membrane + 2 after-spike currents) with Billeh
+  initialization from Allen Institute V1 connectivity (Dale's law enforced).
+- Readout: 10 fixed L5e pools (pool ids 5..14, 30 neurons each), pool firing
+  rates passed through "spike straight-through" gradient (`1/df` scaling) and
+  binned to 50-ms response chunks; classification loss applied within the
+  response window only.
+- Loss: `CE_response + α_v · voltage_loss + α_f · rate_huber_quantile_loss`,
+  with `α_v = 1e-5`, `α_f = 0.1`, Huber `κ = 0.002`.
+- Voltage regularization: penalty on normalized voltage outside [-1, +1].
+- Rate regularization: Huber-quantile distribution match to per-neuron target
+  rates resampled by empirical percentile from `garrett_firing_rates.pkl`.
+- Surrogate gradient: Gaussian (`σ = 0.5`, `dampening_factor = 0.3`).
+
+### Known deviations (intentional simplifications)
+
+| Item | Paper | This repo | Why |
+|------|-------|-----------|-----|
+| Optimizer | SGD + momentum, BPTT | AdamW + cosine, BPTT | Stable on single 4090; minor |
+| GPUs | 160 GPUs × 60 hours | 1× RTX 4090 24GB | Hardware budget |
+| `n_neurons` | 51,798 (full core) | 10,000 (random sub-core) | Memory budget |
+| Precision | fp32 | bf16-mixed (fallback fp32) | Memory; falls back if NaN |
+| Tasks | 5-task joint training (320 trials/batch) | Single-task MNIST (effective batch 64 via accumulation) | This repo focuses on single-task strict reproduction |
+| Epochs | 16 (joint) | 16 (single-task) | Same training compute order |
+
+### Required data files
+
+Under `model_config.billeh_data_dir` (default `/data2/dataset/LGN_GLIF_Models/preprocessed/GLIF_network`):
+
+- `network_dat.pkl`, `v1_node_types.csv`, `v1_nodes.h5` (Billeh GLIF network).
+- `garrett_firing_rates.pkl` (per-cell firing rates from Allen experimental data,
+  used as the target rate distribution).
+
+Under `model_config.lgn_data_path` directory (default `/data2/dataset/LGN_GLIF_Models/new_0505/GLIF_network2`):
+
+- `lgn_full_col_cells_3.csv`, `temporal_kernels.pkl`.
+
+Generate `temporal_kernels.pkl` once with:
+
+```bash
+uv run python scripts/prepare_lgn_kernels.py --lgn_py /path/to/upstream/lgn_model/lgn.py
+```
+
+### Quick start
+
+```bash
+# Smoke test (B=2, single fwd+bwd, no real data needed beyond Billeh + LGN files)
+uv run python -m scripts.smoke_billeh_v1_lgn --batch 2
+
+# Memory check at full strict-repro batch
+uv run python -m scripts.smoke_billeh_v1_lgn --batch 8 --memory
+
+# Full training run
+uv run python train.py \
+  --project_config configs/default_project_configs.yaml \
+  --data_config configs/data_configs/billeh_mnist_lgn.yaml \
+  --train_config configs/train_configs/billeh_mnist.yaml \
+  --model_config configs/model_configs/billeh_v1_mnist_lgn.yaml \
+  --optimizer_config configs/optimizer_configs/billeh_mnist.yaml \
+  --resume auto
+```
+
+### Memory budget
+
+`T=600`, `n_neurons=10000`, `chunk_size=60` (10 chunks via gradient
+checkpointing), `batch_size=8`, `accumulate_grad_batches=8` → effective batch 64.
+Peak GPU memory should fit under ~22 GiB. If OOM, reduce `chunk_size` to 30 or
+`batch_size` to 4 (with `accumulate_grad_batches=16`). If `bf16-mixed` produces
+NaN inside the first 100 steps, switch `precision` to `"32-true"`.
+
 ## Notes
 
 - This is a first version focused on a unified training framework plus representative model families.

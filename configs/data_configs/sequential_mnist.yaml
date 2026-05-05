@@ -11,3 +11,4 @@ permute_seed: 0
 normalize_to_01: true
 download: true
 train_drop_last: false
+patch_size: 2

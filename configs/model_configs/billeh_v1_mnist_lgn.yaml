@@ -1,0 +1,27 @@
+name: billeh_v1
+T: 48
+num_classes: 10
+in_channels: 1
+
+# Billeh V1 backbone setup
+billeh_data_dir: /data2/dataset/LGN_GLIF_Models/preprocessed/GLIF_network
+n_neurons: 10000 # max=51798
+full_core: false
+train_v1: true
+seed: 3407
+use_input_t: true
+auto_n_input_from_in_channels: false
+
+# LGN front-end (PyTorch)
+use_lgn: true
+auto_n_input_from_lgn: true
+lgn_data_path: /data2/dataset/LGN_GLIF_Models/new_0505/GLIF_network2/lgn_full_col_cells_3.csv
+lgn_temporal_kernels_path: /path/to/temporal_kernels.pkl
+
+# If use_lgn=true and input is [B, T, H*W], set these for reshape.
+lgn_input_height: 0
+lgn_input_width: 0
+
+# input -> temporal current/spike encoding
+encoding: identity   # identity | repeat | poisson
+encoding_gain: 1.0

@@ -103,11 +103,17 @@ class UCRDataset(Dataset):
 
 class SequentialMNISTDataset(Dataset):
     def __init__(self, root: str, split: str, val_ratio: float = 0.1, split_seed: int = 42,
-                 permute: bool = False, permute_seed: int = 0, normalize_to_01: bool = True, download: bool = True):
+                 permute: bool = False, permute_seed: int = 0, normalize_to_01: bool = True, download: bool = True,
+                 patch_size: int = 1):
         super().__init__()
         root = os.path.expanduser(root)
         self.permute = bool(permute)
         self.normalize_to_01 = bool(normalize_to_01)
+        self.patch_size = int(patch_size)
+        if self.patch_size <= 0 or 28 % self.patch_size != 0:
+            raise ValueError(f"patch_size must be positive and divide 28, got {self.patch_size}")
+        self.tokens_per_side = 28 // self.patch_size
+        self.num_tokens = self.tokens_per_side * self.tokens_per_side
 
         if split in {"train", "val"}:
             base = datasets.MNIST(root=root, train=True, download=download)
@@ -124,7 +130,7 @@ class SequentialMNISTDataset(Dataset):
 
         if self.permute:
             g = torch.Generator().manual_seed(int(permute_seed))
-            self.pixel_permutation = torch.randperm(28 * 28, generator=g)
+            self.pixel_permutation = torch.randperm(self.num_tokens, generator=g)
         else:
             self.pixel_permutation = None
 
@@ -148,10 +154,16 @@ class SequentialMNISTDataset(Dataset):
         image = torch.as_tensor(np.array(image), dtype=torch.float32)
         if self.normalize_to_01:
             image = image / 255.0
-        sequence = image.reshape(-1)  # [784]
+
+        if self.patch_size == 1:
+            sequence = image.reshape(-1, 1)  # [784, 1]
+        else:
+            # [28, 28] -> [num_patches, patch_size * patch_size]
+            patches = image.unfold(0, self.patch_size, self.patch_size).unfold(1, self.patch_size, self.patch_size)
+            sequence = patches.contiguous().view(self.num_tokens, self.patch_size * self.patch_size)
+
         if self.pixel_permutation is not None:
             sequence = sequence[self.pixel_permutation]
-        sequence = sequence.unsqueeze(-1)  # [T=784, 1]
         return sequence, int(target)
 
 
@@ -220,6 +232,7 @@ def build_event_dataset(data_config, split: str):
         permute_seed = int(getattr(data_config, "permute_seed", 0))
         normalize_to_01 = bool(getattr(data_config, "normalize_to_01", True))
         download = bool(getattr(data_config, "download", True))
+        patch_size = int(getattr(data_config, "patch_size", 1))
         return SequentialMNISTDataset(
             root=root,
             split=split,
@@ -229,6 +242,7 @@ def build_event_dataset(data_config, split: str):
             permute_seed=permute_seed,
             normalize_to_01=normalize_to_01,
             download=download,
+            patch_size=patch_size,
         )
 
     raise ValueError(f"Unsupported event dataset: {name}")

@@ -1,0 +1,6 @@
+[submodule "3rdparty/SimManager"]
+	path = 3rdparty/SimManager
+	url = https://github.com/IGITUGraz/SimManager.git
+[submodule "3rdparty/bmtk"]
+	path = 3rdparty/bmtk
+	url = https://github.com/franzscherr/bmtk.git

@@ -34,10 +34,12 @@ lgn_input_width: 240
 encoding: identity
 encoding_gain: 1.0
 
-# LGN outputs are firing rates in Hz. Empirical calibration on this sub-core
-# (n_neurons=10000): scale=1.0 → 235 Hz (saturated); 1e-3 → 0.13 Hz (silent);
-# target 5–10 Hz population mean. Tune in 1e-2 .. 5e-2 range.
-lgn_input_scale: 1.0e-2
+# LGN outputs are firing rates in Hz. Empirical calibration on n_neurons=10000:
+#   1.0    → 235 Hz (saturated)
+#   1e-2   → 35  Hz (hot)
+#   1e-3   → 0.13 Hz (silent)
+# Target 5–15 Hz at init. Sub-/supra-threshold transition is steep here.
+lgn_input_scale: 7.0e-3
 
 # Spike surrogate / readout.
 dampening_factor: 0.3

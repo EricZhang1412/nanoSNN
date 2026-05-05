@@ -34,9 +34,10 @@ lgn_input_width: 240
 encoding: identity
 encoding_gain: 1.0
 
-# LGN outputs are firing rates in Hz. With dt=1 ms, multiply by 1e-3 to get
-# spikes/timestep (matches Billeh input weight calibration).
-lgn_input_scale: 1.0e-3
+# LGN outputs are firing rates in Hz. Empirical calibration on this sub-core
+# (n_neurons=10000): scale=1.0 → 235 Hz (saturated); 1e-3 → 0.13 Hz (silent);
+# target 5–10 Hz population mean. Tune in 1e-2 .. 5e-2 range.
+lgn_input_scale: 1.0e-2
 
 # Spike surrogate / readout.
 dampening_factor: 0.3

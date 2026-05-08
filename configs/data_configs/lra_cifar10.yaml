@@ -1,0 +1,10 @@
+name: lra_cifar10
+root: /data/maluzhang-folder/zhangdh/code/PAMI/nanosnn/cifar10
+download: true
+num_classes: 10
+num_workers: 4
+pin_memory: true
+train_drop_last: true
+random_seed: 0
+train_fraction: 0.1
+

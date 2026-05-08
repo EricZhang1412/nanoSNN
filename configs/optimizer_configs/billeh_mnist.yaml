@@ -1,0 +1,15 @@
+lr: 1e-3
+beta1: 0.9
+beta2: 0.999
+weight_decay: 0.01
+scheduler: cosine
+warmup_epochs: 1
+min_lr_ratio: 0.01
+
+# Strict-reproduction regularization (Chen-Maass 2022).
+rate_cost: 0.1
+voltage_cost: 1.0e-5
+huber_kappa: 0.002
+
+# Empty -> use <model_config.billeh_data_dir>/garrett_firing_rates.pkl.
+target_rates_path: ""

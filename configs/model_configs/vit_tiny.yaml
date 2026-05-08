@@ -1,0 +1,15 @@
+name: vit
+T: 4
+num_classes: 2
+image_size: 32
+patch_size: 4
+in_channels: 1
+embed_dim: 192
+depth: 6
+num_heads: 3
+mlp_ratio: 4.0
+dropout: 0.1
+attn_dropout: 0.1
+pos_embed: learned     # learned | sinusoidal
+pool: cls              # cls | mean
+

@@ -1,0 +1,49 @@
+name: billeh_v1
+T: 600
+num_classes: 10
+in_channels: 1
+
+# Strict-reproduction trial timing (Chen-Maass 2022, Sci Adv).
+pre_delay: 50
+post_delay: 450
+response_window_len: 50
+down_sample: 50
+
+# Billeh V1 backbone setup
+billeh_data_dir: /data2/dataset/LGN_GLIF_Models/new_0505/GLIF_network2
+n_neurons: 3000          # max=51798; need ≥~3000 L5e for 15 readout pools at neurons_per_output=30
+neurons_per_output: 30   # paper uses ~30 L5e neurons per readout pool
+localized_readout: false  # fallback-safe on reduced core volumes
+full_core: false
+train_v1: true
+seed: 3407
+use_input_t: true
+auto_n_input_from_in_channels: false
+
+# LGN front-end (PyTorch).
+use_lgn: true
+auto_n_input_from_lgn: true
+lgn_data_path: /data2/dataset/LGN_GLIF_Models/new_0505/GLIF_network2/lgn_full_col_cells_3.csv
+lgn_temporal_kernels_path: /data2/dataset/LGN_GLIF_Models/new_0505/GLIF_network2/temporal_kernels.pkl
+
+# LGN coordinates expect a 240x120 retinotopic field.
+lgn_input_height: 120
+lgn_input_width: 240
+
+# Encoding: identity passes LGN firing-rate currents directly to V1.
+encoding: identity
+encoding_gain: 1.0
+
+# LGN outputs are firing rates in Hz. Empirical calibration on n_neurons=10000:
+#   1.0    → 235 Hz (saturated)
+#   1e-2   → 35  Hz (hot)
+#   1e-3   → 0.13 Hz (silent)
+# Target 5–15 Hz at init. Sub-/supra-threshold transition is steep here.
+lgn_input_scale: 7.0e-3
+
+# Spike surrogate / readout.
+dampening_factor: 0.3
+gauss_std: 0.5
+
+# Gradient checkpointing (activation memory budget on 4090).
+chunk_size: 60

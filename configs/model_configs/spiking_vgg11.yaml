@@ -1,0 +1,11 @@
+name: spiking_vgg
+T: 4
+num_classes: 10
+image_size: 32
+in_channels: 3
+arch: vgg11
+neuron_type: lif
+tau: 2.0
+v_threshold: 1.0
+detach_reset: true
+dropout: 0.5

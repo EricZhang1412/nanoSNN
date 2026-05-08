@@ -1,0 +1,11 @@
+name: ucr
+root: /data2/dataset/UCRArchive_2018
+dataset: ECG200
+num_classes: 2
+is_event: true
+num_workers: 4
+pin_memory: true
+val_ratio: 0.3
+split_seed: 42
+zscore_per_sample: true
+train_drop_last: false # Keep the last mini-batch

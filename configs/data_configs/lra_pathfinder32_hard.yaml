@@ -1,0 +1,9 @@
+name: lra_pathfinder32_hard
+root: ./datasets
+num_classes: 2
+image_size: 32
+in_channels: 1
+num_workers: 4
+pin_memory: true
+train_drop_last: true
+

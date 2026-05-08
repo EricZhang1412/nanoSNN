@@ -1,0 +1,18 @@
+name: lra_transformer
+num_classes: 10
+
+# LRA image task: 32x32 grayscale -> sequence length 1024, vocab_size 256
+vocab_size: 256
+max_len: 1024
+
+# Match LRA transformer_base defaults
+emb_dim: 128
+num_heads: 8
+num_layers: 1
+qkv_dim: 64
+mlp_dim: 128
+dropout_rate: 0.3
+attention_dropout_rate: 0.2
+classifier_pool: CLS     # CLS | MEAN | MAX
+learn_pos_emb: true
+

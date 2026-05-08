@@ -1,5 +1,5 @@
 name: sequential_mnist
-root: /data2/users/zhangjy/Training-data-driven-V1-model/data/mnist
+root: /data1/dataset/mnist
 num_classes: 10
 is_event: true
 num_workers: 4
@@ -11,4 +11,4 @@ permute_seed: 0
 normalize_to_01: true
 download: true
 train_drop_last: false
-patch_size: 2
+patch_size: 1

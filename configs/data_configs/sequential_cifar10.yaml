@@ -1,0 +1,21 @@
+name: sequential_cifar10
+root: /data1/dataset/cifar10
+num_classes: 10
+is_event: true
+num_workers: 4
+pin_memory: true
+val_ratio: 0.1
+split_seed: 42
+# S4 / Mamba sCIFAR convention:
+# 32x32 RGB row-major flatten -> [L=1024, D=3] float32, normalized with
+# CIFAR-10 per-channel mean/std (Krizhevsky's stats).
+# For the LRA "Image" task use sequential_cifar10_lra.yaml instead.
+grayscale: false
+quantize_to_int: false
+normalize_to_01: true
+channel_normalize: true
+permute: false
+permute_seed: 0
+download: true
+train_drop_last: false
+patch_size: 1

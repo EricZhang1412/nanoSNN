@@ -144,7 +144,25 @@ class LRATransformerEncoder(nn.Module):
         cfg = _cfg(model_config)
         self.cfg = cfg
 
-        self.embed = nn.Embedding(cfg.vocab_size, cfg.emb_dim)
+        # Input mode (resolved at init time so only the chosen front-end has params,
+        # otherwise DDP errors out on unused parameters):
+        #   "token"  -> nn.Embedding (input must be int with last-dim==1).
+        #   "linear" -> nn.Linear  (input must be float with last-dim==input_dim).
+        #   "auto"   -> picks "linear" if input_dim > 1 else "token".
+        raw_mode = str(getattr(model_config, "input_mode", "auto")).lower()
+        if raw_mode not in {"auto", "token", "linear"}:
+            raise ValueError(f"Unknown input_mode={raw_mode!r}")
+        self.input_dim = int(getattr(model_config, "input_dim", 1))
+        if raw_mode == "auto":
+            raw_mode = "linear" if self.input_dim > 1 else "token"
+        self.input_mode = raw_mode
+
+        if self.input_mode == "token":
+            self.embed = nn.Embedding(cfg.vocab_size, cfg.emb_dim)
+            self.input_proj = None
+        else:
+            self.embed = None
+            self.input_proj = nn.Linear(self.input_dim, cfg.emb_dim)
         self.cls_token = nn.Parameter(torch.zeros(1, 1, cfg.emb_dim))
 
         n_tokens = cfg.max_len + 1  # + CLS
@@ -198,17 +216,25 @@ class LRATransformerEncoder(nn.Module):
         return self.pos_embed[:, :n_tokens].to(device=device, dtype=dtype)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if x.ndim != 2 and x.shape[-1] != 1:
-            raise ValueError(f"LRATransformerEncoder expects [B, L, 1], got {tuple(x.shape)}")
-        x = x.squeeze(-1)
-        B, L = x.shape
+        if x.ndim != 3:
+            raise ValueError(f"LRATransformerEncoder expects [B, L, D], got {tuple(x.shape)}")
+        B, L, D = x.shape
         if L != self.cfg.max_len:
             raise ValueError(f"Expected sequence length {self.cfg.max_len}, got {L}")
 
-        x = x.long()
-        x = self.embed(x)  # [B,L,D]
+        if self.input_mode == "linear":
+            if D != self.input_dim:
+                raise ValueError(
+                    f"linear input_mode expects last dim == input_dim ({self.input_dim}), got D={D}"
+                )
+            x = self.input_proj(x.float())  # [B, L, emb_dim]
+        else:  # token
+            if D != 1:
+                raise ValueError(f"token input_mode expects last dim == 1, got D={D}")
+            x = self.embed(x.squeeze(-1).long())  # [B, L, emb_dim]
+
         cls = self.cls_token.expand(B, -1, -1)
-        x = torch.cat([cls, x], dim=1)  # [B,1+L,D]
+        x = torch.cat([cls, x], dim=1)  # [B, 1+L, emb_dim]
         x = x + self._pos(x.shape[1], x.device, x.dtype)
         x = self.drop(x)
 

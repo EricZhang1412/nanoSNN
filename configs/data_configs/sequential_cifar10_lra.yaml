@@ -1,0 +1,20 @@
+name: sequential_cifar10
+root: /data1/dataset/cifar10
+num_classes: 10
+is_event: true
+num_workers: 4
+pin_memory: true
+val_ratio: 0.1
+split_seed: 42
+
+# LRA "image" task: row-major flatten 32x32 grayscale -> 1024-token sequence,
+# 256-bin uint8 quantization (paired with the token-embedding LRA Transformer
+# whose vocab_size=256). Output shape: [L=1024, 1] int64.
+grayscale: true
+quantize_to_int: true
+normalize_to_01: true
+permute: false
+permute_seed: 0
+download: true
+train_drop_last: false
+patch_size: 1

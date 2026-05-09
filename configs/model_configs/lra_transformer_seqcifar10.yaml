@@ -1,0 +1,23 @@
+name: lra_transformer
+num_classes: 10
+
+# input_mode: auto | token | linear
+#   auto   -> int data goes through Embedding, float data through Linear projection.
+#   token  -> Embedding only (data: [B, L, 1] long; pair with sequential_cifar10_lra*.yaml).
+#   linear -> Linear projection only (data: [B, L, input_dim] float;
+#             pair with sequential_cifar10[_fewshot].yaml).
+input_mode: auto
+input_dim: 1          # last-dim of float input (RGB=3, grayscale-float=1)
+vocab_size: 256         # used when token mode is active
+max_len: 1024
+
+# Match LRA transformer_base defaults
+emb_dim: 128
+num_heads: 8
+num_layers: 1
+qkv_dim: 64
+mlp_dim: 128
+dropout_rate: 0.3
+attention_dropout_rate: 0.2
+classifier_pool: CLS     # CLS | MEAN | MAX
+learn_pos_emb: true

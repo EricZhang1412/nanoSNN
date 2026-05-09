@@ -1,0 +1,26 @@
+name: sequential_cifar10
+root: /data1/dataset/cifar10
+num_classes: 10
+is_event: true
+num_workers: 4
+pin_memory: true
+val_ratio: 0.1
+split_seed: 42
+
+# LRA "image" task feed (int-token, paired with LRA Transformer).
+grayscale: true
+quantize_to_int: true
+normalize_to_01: true
+permute: false
+permute_seed: 0
+download: true
+train_drop_last: false
+patch_size: 1
+
+# --------- Few-shot subsampling of the train split ---------
+# Subsampling runs AFTER the train/val split, so val/test are untouched and
+# val accuracy stays comparable across few-shot scales.
+train_subset_ratio: 0.1
+train_subset_size: null
+train_subset_balanced: true
+train_subset_seed: 0

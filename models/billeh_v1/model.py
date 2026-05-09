@@ -5,7 +5,6 @@ import os
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from ..common.registry import register_model
 from .billeh_column import BillehColumnTorch
@@ -198,10 +197,11 @@ class BillehV1Classifier(nn.Module):
             raise ValueError(f"Unsupported input shape for billeh_v1: {tuple(x.shape)}")
 
         if x.shape[-1] != self.n_input:
-            bsz, tsz = x.shape[0], x.shape[1]
-            x = x.reshape(bsz * tsz, 1, x.shape[-1])
-            x = F.interpolate(x, size=self.n_input, mode="linear", align_corners=False)
-            x = x.reshape(bsz, tsz, self.n_input)
+            raise ValueError(
+                f"billeh_v1 expects input last dim == n_input ({self.n_input}), "
+                f"got {x.shape[-1]}. Align the data feature dim with model_config.in_channels "
+                f"(or n_input)."
+            )
 
         if not self.use_input_t:
             if x.shape[1] < self.T:
@@ -242,10 +242,10 @@ class BillehV1Classifier(nn.Module):
         # Strict reproduction: dataset is responsible for assembling the full
         # [pre + im_slice + post] movie; do NOT pad or truncate here.
         if x_btn.shape[-1] != self.n_input:
-            bsz, tsz = x_btn.shape[0], x_btn.shape[1]
-            x_btn = x_btn.reshape(bsz * tsz, 1, x_btn.shape[-1])
-            x_btn = F.interpolate(x_btn, size=self.n_input, mode="linear", align_corners=False)
-            x_btn = x_btn.reshape(bsz, tsz, self.n_input)
+            raise ValueError(
+                f"LGN output last dim ({x_btn.shape[-1]}) != n_input ({self.n_input}). "
+                f"Set model_config.n_input (or auto_n_input_from_lgn=true) to match the LGN cell count."
+            )
         return x_btn
 
     def _encode(self, x_btn: torch.Tensor) -> torch.Tensor:

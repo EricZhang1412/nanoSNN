@@ -41,6 +41,10 @@ def infer_num_classes(data_config, dataset=None) -> int:
         "dvs128gesture": 11,
         "imagenet": 1000,
         "imagefolder": 1000,
+        "sequential_mnist": 10,
+        "seqmnist": 10,
+        "sequential_cifar10": 10,
+        "seqcifar10": 10,
     }
     if name not in fallback:
         raise ValueError(f"Cannot infer num_classes for dataset {name}")

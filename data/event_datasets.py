@@ -21,6 +21,8 @@ EVENT_DATASETS = {
     "ucr",
     "sequential_mnist",
     "seqmnist",
+    "sequential_cifar10",
+    "seqcifar10",
     "billeh_mnist_lgn",
 }
 
@@ -235,6 +237,210 @@ class SequentialMNISTDataset(Dataset):
         return sequence, int(target)
 
 
+class SequentialCIFAR10Dataset(Dataset):
+    """Sequential CIFAR-10 (LRA-style image task).
+
+    A 32x32 image is flattened in row-major order into a sequence of length
+    1024 / patch_size**2. Default mode (LRA "image" task): convert to grayscale
+    via BT.601 luma, quantize to 256 integer levels, output shape ``[L, 1]``
+    long tensor — directly compatible with the embedding-based
+    ``LRATransformerEncoder`` (vocab_size=256).
+
+    Set ``grayscale=False`` and ``quantize_to_int=False`` to obtain a float
+    sequence ``[L, C]`` (with ``C = 3 * patch_size**2`` for RGB, or
+    ``patch_size**2`` for grayscale) for SNN-style downstream models.
+    """
+
+    # CIFAR-10 channel statistics for S4/Mamba-style normalization.
+    _CIFAR10_MEAN = (0.4914, 0.4822, 0.4465)
+    _CIFAR10_STD = (0.2470, 0.2435, 0.2616)
+
+    def __init__(
+        self,
+        root: str,
+        split: str,
+        val_ratio: float = 0.1,
+        split_seed: int = 42,
+        grayscale: bool = True,
+        quantize_to_int: bool = True,
+        normalize_to_01: bool = True,
+        channel_normalize: bool = False,
+        permute: bool = False,
+        permute_seed: int = 0,
+        download: bool = True,
+        patch_size: int = 1,
+        train_subset_ratio: float | None = None,
+        train_subset_size: int | None = None,
+        train_subset_seed: int = 0,
+        train_subset_balanced: bool = False,
+    ):
+        super().__init__()
+        root = os.path.expanduser(root)
+        self.grayscale = bool(grayscale)
+        self.quantize_to_int = bool(quantize_to_int)
+        self.normalize_to_01 = bool(normalize_to_01)
+        self.channel_normalize = bool(channel_normalize)
+        if self.channel_normalize and (self.quantize_to_int or self.grayscale):
+            raise ValueError(
+                "channel_normalize requires float RGB output "
+                "(set grayscale=false and quantize_to_int=false)"
+            )
+        self.permute = bool(permute)
+        self.patch_size = int(patch_size)
+        if self.patch_size <= 0 or 32 % self.patch_size != 0:
+            raise ValueError(f"patch_size must be positive and divide 32, got {self.patch_size}")
+        self.tokens_per_side = 32 // self.patch_size
+        self.num_tokens = self.tokens_per_side * self.tokens_per_side
+
+        if split in {"train", "val"}:
+            base = datasets.CIFAR10(root=root, train=True, download=download)
+            train_idx, val_idx = self._split_train_val_indices(len(base), val_ratio, split_seed)
+            indices = train_idx if split == "train" else val_idx
+            if split == "train":
+                indices = self._maybe_subsample_train(
+                    indices=indices,
+                    base=base,
+                    ratio=train_subset_ratio,
+                    size=train_subset_size,
+                    seed=train_subset_seed,
+                    balanced=bool(train_subset_balanced),
+                )
+            self.base = Subset(base, indices)
+            self.classes = list(base.classes)
+        elif split == "test":
+            base = datasets.CIFAR10(root=root, train=False, download=download)
+            self.base = base
+            self.classes = list(base.classes)
+        else:
+            raise ValueError(f"Unsupported SequentialCIFAR10 split: {split}")
+
+        if self.permute:
+            g = torch.Generator().manual_seed(int(permute_seed))
+            self.pixel_permutation = torch.randperm(self.num_tokens, generator=g)
+        else:
+            self.pixel_permutation = None
+
+    @staticmethod
+    def _split_train_val_indices(length: int, val_ratio: float, seed: int):
+        if not (0.0 <= val_ratio < 1.0):
+            raise ValueError(f"val_ratio must be in [0, 1), got {val_ratio}")
+        n_val = int(math.floor(length * val_ratio))
+        generator = np.random.default_rng(seed)
+        indices = np.arange(length)
+        generator.shuffle(indices)
+        val_idx = indices[:n_val]
+        train_idx = indices[n_val:]
+        return train_idx, val_idx
+
+    @staticmethod
+    def _maybe_subsample_train(indices, base, ratio, size, seed, balanced):
+        """Deterministically subsample the train indices for few-shot training.
+
+        Either ``ratio`` (in (0, 1]) or ``size`` (positive int <= len(indices))
+        may be provided; ``size`` takes priority. When ``balanced`` is set, the
+        per-class count is matched (rounded down), so the smallest representable
+        sample is ``num_classes`` and the resulting set is class-balanced.
+        """
+        if size is None and ratio is None:
+            return indices
+        n_total = len(indices)
+        if size is not None:
+            target_n = int(size)
+        else:
+            r = float(ratio)
+            if not (0.0 < r <= 1.0):
+                raise ValueError(f"train_subset_ratio must be in (0, 1], got {r}")
+            target_n = int(math.floor(n_total * r))
+        if target_n <= 0 or target_n > n_total:
+            raise ValueError(
+                f"train_subset target size {target_n} is invalid (have {n_total})"
+            )
+        if target_n == n_total:
+            return indices
+
+        rng = np.random.default_rng(int(seed))
+        if not balanced:
+            order = rng.permutation(n_total)
+            return indices[order[:target_n]]
+
+        labels = np.asarray(getattr(base, "targets", None), dtype=np.int64)
+        if labels.size != len(base):
+            raise ValueError("Cannot do balanced subsample: base dataset has no targets")
+        sub_labels = labels[indices]
+        classes = np.unique(sub_labels)
+        per_class = target_n // classes.size
+        if per_class <= 0:
+            raise ValueError(
+                f"target size {target_n} too small for {classes.size}-way balanced subsample"
+            )
+        picked = []
+        for c in classes:
+            cls_idx = indices[sub_labels == c]
+            order = rng.permutation(len(cls_idx))
+            picked.append(cls_idx[order[:per_class]])
+        out = np.concatenate(picked)
+        rng.shuffle(out)
+        return out
+
+    def __len__(self):
+        return len(self.base)
+
+    def __getitem__(self, index):
+        image, target = self.base[index]
+        arr = np.asarray(image, dtype=np.uint8)  # [H, W, 3]
+
+        if self.grayscale:
+            gray = (
+                0.2989 * arr[..., 0].astype(np.float32)
+                + 0.5870 * arr[..., 1].astype(np.float32)
+                + 0.1140 * arr[..., 2].astype(np.float32)
+            )
+            arr = np.clip(np.round(gray), 0, 255).astype(np.uint8)  # [H, W]
+
+        arr = np.ascontiguousarray(arr).copy()
+        if self.quantize_to_int:
+            tensor = torch.from_numpy(arr).long()
+        else:
+            tensor = torch.from_numpy(arr).float()
+            if self.normalize_to_01:
+                tensor = tensor / 255.0
+            if self.channel_normalize:
+                # S4/Mamba sCIFAR convention: per-channel mean/std on RGB.
+                mean = torch.tensor(self._CIFAR10_MEAN, dtype=tensor.dtype).view(1, 1, 3)
+                std = torch.tensor(self._CIFAR10_STD, dtype=tensor.dtype).view(1, 1, 3)
+                tensor = (tensor - mean) / std
+
+        if self.grayscale:
+            # tensor: [H, W]
+            if self.patch_size == 1:
+                sequence = tensor.reshape(-1, 1)  # [1024, 1]
+            else:
+                patches = tensor.unfold(0, self.patch_size, self.patch_size).unfold(
+                    1, self.patch_size, self.patch_size
+                )
+                sequence = patches.contiguous().view(
+                    self.num_tokens, self.patch_size * self.patch_size
+                )
+        else:
+            # tensor: [H, W, 3]
+            if self.patch_size == 1:
+                sequence = tensor.reshape(-1, 3)  # [1024, 3]
+            else:
+                tensor_chw = tensor.permute(2, 0, 1).contiguous()  # [3, H, W]
+                patches = tensor_chw.unfold(1, self.patch_size, self.patch_size).unfold(
+                    2, self.patch_size, self.patch_size
+                )
+                # patches: [3, num_h, num_w, p, p] -> [num_h, num_w, 3, p, p]
+                patches = patches.permute(1, 2, 0, 3, 4).contiguous()
+                sequence = patches.view(
+                    self.num_tokens, 3 * self.patch_size * self.patch_size
+                )
+
+        if self.pixel_permutation is not None:
+            sequence = sequence[self.pixel_permutation]
+        return sequence, int(target)
+
+
 def _dataset_name(data_config) -> str:
     return str(getattr(data_config, "name", "")).lower()
 
@@ -311,6 +517,40 @@ def build_event_dataset(data_config, split: str):
             normalize_to_01=normalize_to_01,
             download=download,
             patch_size=patch_size,
+        )
+
+    if name in {"sequential_cifar10", "seqcifar10"}:
+        val_ratio = float(getattr(data_config, "val_ratio", 0.1))
+        split_seed = int(getattr(data_config, "split_seed", 42))
+        grayscale = bool(getattr(data_config, "grayscale", True))
+        quantize_to_int = bool(getattr(data_config, "quantize_to_int", True))
+        normalize_to_01 = bool(getattr(data_config, "normalize_to_01", True))
+        channel_normalize = bool(getattr(data_config, "channel_normalize", False))
+        permute = bool(getattr(data_config, "permute", False))
+        permute_seed = int(getattr(data_config, "permute_seed", 0))
+        download = bool(getattr(data_config, "download", True))
+        patch_size = int(getattr(data_config, "patch_size", 1))
+        train_subset_ratio = getattr(data_config, "train_subset_ratio", None)
+        train_subset_size = getattr(data_config, "train_subset_size", None)
+        train_subset_seed = int(getattr(data_config, "train_subset_seed", 0))
+        train_subset_balanced = bool(getattr(data_config, "train_subset_balanced", False))
+        return SequentialCIFAR10Dataset(
+            root=root,
+            split=split,
+            val_ratio=val_ratio,
+            split_seed=split_seed,
+            grayscale=grayscale,
+            quantize_to_int=quantize_to_int,
+            normalize_to_01=normalize_to_01,
+            channel_normalize=channel_normalize,
+            permute=permute,
+            permute_seed=permute_seed,
+            download=download,
+            patch_size=patch_size,
+            train_subset_ratio=(None if train_subset_ratio is None else float(train_subset_ratio)),
+            train_subset_size=(None if train_subset_size is None else int(train_subset_size)),
+            train_subset_seed=train_subset_seed,
+            train_subset_balanced=train_subset_balanced,
         )
 
     if name == "billeh_mnist_lgn":

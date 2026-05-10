@@ -6,9 +6,9 @@ export CUDA_VISIBLE_DEVICES=3,4,5,6
 
 PROJECT=${1:-default_project_configs}
 TRAINING=${2:-transformer}
-MODEL=${3:-billeh_v1_seqcifar10}
+MODEL=${3:-billeh_v1_seqcifar10_lgn}
 DATA=${4:-sequential_cifar10_fewshot}
-OPTIMIZER=${5:-transformer}
+OPTIMIZER=${5:-billeh_seqcifar10}
 
 GPUS=${6:-4}
 NODES=${7:-1}

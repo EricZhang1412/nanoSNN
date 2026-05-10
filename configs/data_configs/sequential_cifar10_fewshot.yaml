@@ -1,5 +1,5 @@
 name: sequential_cifar10
-root: /data1/dataset/cifar10
+root: /data2/dataset/cifar10
 num_classes: 10
 is_event: true
 num_workers: 4

@@ -131,17 +131,25 @@ class BillehV1Classifier(nn.Module):
             device="cpu",
         )
 
-        # Pool ids: upstream uses pools 5..14 for the 10-class task (skip 0..4
-        # reserved for the garrett 2-class task).
+        # Pool ids: upstream uses pools 5..14 for the 10-class image task
+        # (pools 0..4 reserved for garrett 2-class). For other class counts
+        # (e.g. 11-class DVS128Gesture) we use the first num_classes pools so
+        # all classes get disjoint readouts. Cap at 15 (the available pool count).
         network = loaded["network"]
+        if self.num_classes > 15:
+            raise ValueError(
+                f"num_classes={self.num_classes} exceeds the 15 localized readout pools"
+            )
+        if self.num_classes == 10 and "localized_readout_neuron_ids_5" in network:
+            pool_offset = 5
+        else:
+            pool_offset = 0
         pool_ids = []
         for i in range(self.num_classes):
-            key = f"localized_readout_neuron_ids_{i + 5}"
+            key = f"localized_readout_neuron_ids_{i + pool_offset}"
             if key not in network:
-                # fall back to pools 0..(num_classes-1) if 5..14 are unavailable
-                key = f"localized_readout_neuron_ids_{i}"
-            ids = np.asarray(network[key]).reshape(-1)
-            pool_ids.append(ids)
+                raise KeyError(f"missing localized readout pool {i + pool_offset}")
+            pool_ids.append(np.asarray(network[key]).reshape(-1))
 
         self.readout = LocalizedPoolReadout(
             pool_ids=pool_ids,

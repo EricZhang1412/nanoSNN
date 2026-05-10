@@ -222,6 +222,18 @@ class BillehV1Classifier(nn.Module):
                 movie = x.mean(dim=2)
             else:
                 movie = x[:, :, 0]
+            # K-replay: short event-frame inputs (e.g. DVS T_dvs=16) get each
+            # frame held for self.T // T_in LGN steps. Lets datasets follow
+            # spikingjelly conventions while LGN/V1 retain ms-resolution.
+            t_in = movie.shape[1]
+            t_lgn = int(self.T)
+            if t_lgn != t_in:
+                if t_lgn <= 0 or t_lgn % t_in != 0:
+                    raise ValueError(
+                        f"model.T={t_lgn} must be a multiple of input T={t_in} for K-replay (positive integer)"
+                    )
+                k = t_lgn // t_in
+                movie = movie.repeat_interleave(k, dim=1)
         elif x.ndim == 4:
             # [B, C, H, W] -> [B, T=1, H, W]
             movie = x.mean(dim=1, keepdim=False).unsqueeze(1)

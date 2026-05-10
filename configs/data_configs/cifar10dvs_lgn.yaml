@@ -1,0 +1,24 @@
+name: cifar10dvs
+root: /data2/dataset/cifar10dvs
+num_classes: 10
+image_size: 48           # transform resizes from native 128x128 to 48x48
+in_channels: 1           # post signed-diff polarity collapse
+is_event: true
+
+# spikingjelly frame integration: 16 frames per sample, each frame integrates
+# events by count across the full duration.
+event_data_type: frame
+frames_number: 16
+split_by: number
+
+# DVS-LGN transform: signed-diff (ON - OFF), bilinear resize to image_size,
+# per-sample magnitude normalization to ~[-1, 1].
+transform_type: dvs_lgn
+polarity_mode: signed
+
+# Train/val split (CIFAR10-DVS has only a 10k single split — random 90/10).
+train_ratio: 0.9
+split_seed: 42
+
+num_workers: 4
+pin_memory: true

@@ -230,7 +230,8 @@ class BillehV1Classifier(nn.Module):
             if t_lgn != t_in:
                 if t_lgn <= 0 or t_lgn % t_in != 0:
                     raise ValueError(
-                        f"model.T={t_lgn} must be a multiple of input T={t_in} for K-replay (positive integer)"
+                        f"K-replay requires model.T ({t_lgn}) to be a positive multiple of input T ({t_in}); "
+                        f"adjust model_config.T or the dataset's frames_number so model.T % T_input == 0"
                     )
                 k = t_lgn // t_in
                 movie = movie.repeat_interleave(k, dim=1)

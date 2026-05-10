@@ -50,6 +50,7 @@ def test_replay_expands_t_dvs_to_t_lgn():
         assert torch.allclose(block, torch.full_like(block, float(i))), (
             f"block {i} expected constant {i}, got mean {block.mean().item()}"
         )
+    m.lgn = real_lgn
 
 
 def test_replay_passes_through_when_t_matches():
@@ -74,6 +75,7 @@ def test_replay_passes_through_when_t_matches():
     spy_movie = captured['movie']
     assert spy_movie.shape == (1, 1024, 32, 32)
     assert spy_movie[0, 100, 0, 0].item() == 1.0
+    m.lgn = real_lgn
 
 
 def test_replay_rejects_non_divisible():
@@ -84,7 +86,7 @@ def test_replay_rejects_non_divisible():
     try:
         m._to_b_t_n_via_lgn(movie)
     except ValueError as e:
-        assert "must be a multiple" in str(e) or "divides" in str(e).lower(), str(e)
+        assert "positive multiple" in str(e), str(e)
         return
     raise AssertionError("expected ValueError for non-divisible T")
 

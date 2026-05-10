@@ -470,7 +470,12 @@ def _split_cifar10dvs(dataset, split: str, train_ratio: float, seed: int, transf
 def build_event_dataset(data_config, split: str):
     name = _dataset_name(data_config)
     root = os.path.expanduser(getattr(data_config, "root", "./datasets"))
-    transform = build_event_transform(data_config)
+    transform_type = str(getattr(data_config, "transform_type", "default")).lower()
+    if transform_type == "dvs_lgn":
+        from .transforms import build_dvs_lgn_transform
+        transform = build_dvs_lgn_transform(data_config)
+    else:
+        transform = build_event_transform(data_config)
     kwargs = _event_kwargs(data_config)
 
     if name == "cifar10dvs":

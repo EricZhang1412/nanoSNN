@@ -136,3 +136,51 @@ def build_event_transform(data_config):
         return tensor * scale
 
     return _transform
+
+
+def build_dvs_lgn_transform(data_config):
+    """Polarity collapse + per-sample magnitude normalization for spikingjelly DVS frames.
+
+    Input: [T_dvs, 2, H_native, W_native] event counts (np.ndarray or tensor).
+    Output: [T_dvs, 1, H_out, W_out] float32 in approximately [-1, 1].
+    """
+    import torch.nn.functional as F  # local import; transforms.py uses torchvision elsewhere
+
+    image_size = int(getattr(data_config, "image_size", 0) or 0)
+    polarity_mode = str(getattr(data_config, "polarity_mode", "signed")).lower()
+
+    def _transform(frames):
+        if isinstance(frames, np.ndarray):
+            tensor = torch.from_numpy(frames)
+        elif torch.is_tensor(frames):
+            tensor = frames
+        else:
+            tensor = torch.tensor(frames)
+        tensor = tensor.float()
+        if tensor.ndim != 4 or tensor.shape[1] != 2:
+            raise ValueError(
+                f"build_dvs_lgn_transform expects [T, 2, H, W], got {tuple(tensor.shape)}"
+            )
+
+        if polarity_mode == "signed":
+            collapsed = tensor[:, 0] - tensor[:, 1]    # [T, H, W]
+        elif polarity_mode == "mean":
+            collapsed = tensor.mean(dim=1)              # [T, H, W]
+        else:
+            raise ValueError(
+                f"polarity_mode must be 'signed' or 'mean', got {polarity_mode!r}"
+            )
+
+        if image_size > 0 and (collapsed.shape[-1] != image_size or collapsed.shape[-2] != image_size):
+            collapsed = F.interpolate(
+                collapsed.unsqueeze(1),                 # [T, 1, H, W]
+                size=(image_size, image_size),
+                mode="bilinear",
+                align_corners=False,
+            ).squeeze(1)
+
+        denom = collapsed.abs().amax().clamp_min(1e-3)
+        collapsed = collapsed / denom
+        return collapsed.unsqueeze(1).contiguous()      # [T, 1, H, W]
+
+    return _transform

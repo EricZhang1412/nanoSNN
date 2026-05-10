@@ -1,0 +1,40 @@
+name: billeh_v1
+T: 1024
+num_classes: 11
+in_channels: 1
+
+# Trial timing — same as cifar10dvs.
+pre_delay: 64
+post_delay: 0
+response_window_len: 0
+down_sample: 64
+
+billeh_data_dir: /data2/dataset/LGN_GLIF_Models/new_0505/GLIF_network2
+n_neurons: 3000
+neurons_per_output: 30
+localized_readout: false
+full_core: false
+train_v1: true
+seed: 3407
+use_input_t: true
+auto_n_input_from_in_channels: false
+
+use_lgn: true
+auto_n_input_from_lgn: true
+lgn_data_path: /data2/dataset/LGN_GLIF_Models/new_0505/GLIF_network2/lgn_full_col_cells_3.csv
+lgn_temporal_kernels_path: /data2/dataset/LGN_GLIF_Models/new_0505/GLIF_network2/temporal_kernels.pkl
+lgn_input_height: 128
+lgn_input_width: 128
+
+encoding: identity
+encoding_gain: 1.0
+
+# Carry over the calibrated cifar10dvs value (9e-3) as a starting point.
+# DVS128Gesture has larger spatial extent (128x128 vs 48x48) so the LGN
+# spatial-conv response may scale differently; Task 10 smoke test will tune.
+lgn_input_scale: 9.0e-3
+
+dampening_factor: 0.3
+gauss_std: 0.5
+# H=128 is ~7x more pixels than H=48; halve chunk_size to fit 4090 memory.
+chunk_size: 32

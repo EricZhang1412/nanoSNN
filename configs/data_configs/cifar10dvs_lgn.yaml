@@ -4,6 +4,7 @@ num_classes: 10
 image_size: 48           # transform resizes from native 128x128 to 48x48
 in_channels: 1           # post signed-diff polarity collapse
 is_event: true
+T: 16                    # T == frames_number; defensive fallback if frames_number is dropped
 
 # spikingjelly frame integration: 16 frames per sample, each frame integrates
 # events by count across the full duration.

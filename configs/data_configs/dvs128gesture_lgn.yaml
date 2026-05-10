@@ -4,6 +4,7 @@ num_classes: 11
 image_size: 128          # native sensor; LGN downsamples internally via grid_sample
 in_channels: 1
 is_event: true
+T: 16                    # T == frames_number; defensive fallback if frames_number is dropped
 
 # IMPORTANT: spikingjelly cannot auto-download DVS128Gesture. Place
 # DvsGesture.tar.gz under <root>/download/ before first run.

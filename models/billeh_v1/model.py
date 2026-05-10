@@ -232,9 +232,25 @@ class BillehV1Classifier(nn.Module):
                 raise ValueError(
                     "use_lgn with 3D input requires model_config.lgn_input_height and lgn_input_width"
                 )
-            if x.shape[-1] != h * w:
-                raise ValueError(f"Expected input last dim={h*w}, got {x.shape[-1]}")
-            movie = x.reshape(x.shape[0], x.shape[1], h, w)
+            b, t_seq, c_last = x.shape
+            if c_last == h * w:
+                # Flat-spatial: last dim already encodes the (H, W) frame.
+                movie = x.reshape(b, t_seq, h, w)
+            elif t_seq == h * w:
+                # Sequential pixel-scan layout (e.g. seq-CIFAR/MNIST):
+                # the sequence dim is the row-major spatial flatten and the
+                # last dim is C. Collapse to grayscale, fold time into (H, W),
+                # then replay as a static movie of length self.T so the LGN
+                # has a usable temporal axis.
+                gray = x.mean(dim=-1) if c_last > 1 else x[..., 0]
+                frame = gray.reshape(b, h, w).unsqueeze(1)
+                t_movie = int(self.T) if self.T > 0 else 1
+                movie = frame.expand(b, t_movie, h, w).contiguous()
+            else:
+                raise ValueError(
+                    f"Unsupported 3D input shape for LGN path: {tuple(x.shape)}; "
+                    f"expected last dim={h*w} or seq dim={h*w} (got {c_last}, {t_seq})"
+                )
         else:
             raise ValueError(f"Unsupported input shape for LGN path: {tuple(x.shape)}")
 

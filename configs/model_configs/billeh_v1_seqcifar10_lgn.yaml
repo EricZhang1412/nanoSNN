@@ -1,0 +1,55 @@
+name: billeh_v1
+T: 1024
+num_classes: 10
+in_channels: 3
+
+# Trial timing: skip the first ~64 ms of LGN transient, average the rest.
+# T=1024 % down_sample=64 must be 0; gives 16 readout chunks.
+pre_delay: 64
+post_delay: 0
+response_window_len: 0
+down_sample: 64
+
+# Billeh V1 backbone setup.
+# IMPORTANT: keep auto_n_input_from_in_channels=false so the LGN path drives
+# the full 17400-cell input population. Otherwise reduce_input_population
+# would collapse the LGN-to-V1 weights into 3 super-channels and saturate V1.
+billeh_data_dir: /data2/dataset/LGN_GLIF_Models/new_0505/GLIF_network2
+n_neurons: 3000          # need ≥~3000 L5e for 15 readout pools at neurons_per_output=30
+neurons_per_output: 30
+localized_readout: false
+full_core: false
+train_v1: true
+seed: 3407
+use_input_t: true
+auto_n_input_from_in_channels: false
+
+# LGN front-end (PyTorch). The seq-CIFAR loader returns [B, T_seq=1024, 3];
+# the model folds T_seq into (H=32, W=32) grayscale and replays as a static
+# movie for self.T frames. For best LGN behavior set channel_normalize=false
+# in the data config (keeps movie luminance roughly in [0, 1]).
+use_lgn: true
+auto_n_input_from_lgn: true
+lgn_data_path: /data2/dataset/LGN_GLIF_Models/new_0505/GLIF_network2/lgn_full_col_cells_3.csv
+lgn_temporal_kernels_path: /data2/dataset/LGN_GLIF_Models/new_0505/GLIF_network2/temporal_kernels.pkl
+lgn_input_height: 32
+lgn_input_width: 32
+
+# Encoding: identity passes LGN firing-rate currents directly to V1.
+encoding: identity
+encoding_gain: 1.0
+
+# LGN outputs are firing rates in Hz. Empirical calibration on n_neurons=10000
+# (see billeh_v1_mnist_lgn.yaml):
+#   1.0    → ~235 Hz (saturated)
+#   1e-2   → ~35  Hz (hot)
+#   1e-3   → ~0.13 Hz (silent)
+# Target 5-15 Hz at init; tune downward if val/spike_rate_hz > 30 at epoch 0.
+lgn_input_scale: 7.0e-3
+
+# Spike surrogate / readout.
+dampening_factor: 0.3
+gauss_std: 0.5
+
+# Gradient checkpointing (activation memory budget on 4090).
+chunk_size: 64

@@ -34,10 +34,11 @@ lgn_input_width: 48
 encoding: identity
 encoding_gain: 1.0
 
-# Initial guess; calibrate via smoke test (Task 7) until V1 rate sits in
-# [10, 30] Hz at init. DVS event magnitudes are typically smaller than the
-# CIFAR luminance signal, so start ~7x smaller than the seq-CIFAR config.
-lgn_input_scale: 1.0e-3
+# Calibrated via smoke test. DVS event frames are sparse (most pixels 0 even
+# after per-sample [-1, 1] normalization), so the LGN spatial-convolved energy
+# is much lower than CIFAR luminance — needs ~7x LARGER scale than seq-CIFAR's
+# 7e-3 to land V1 in [5, 30] Hz at init.
+lgn_input_scale: 9.0e-3
 
 dampening_factor: 0.3
 gauss_std: 0.5

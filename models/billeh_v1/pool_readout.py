@@ -7,11 +7,13 @@ import torch.nn.functional as F
 
 class LocalizedPoolReadout(nn.Module):
     """
-    Strict reproduction of the readout used in Chen-Scherr-Maass (Sci Adv 2022).
+    Pool-prior readout: keep Chen-Maass L5e pool structure as a hard constraint
+    (neurons outside pool_c never contribute to class c), but allow per-entry
+    weights, per-class scale, and per-class bias to be learned.
 
-    For each class c, average the spike trains of a fixed L5e neuron pool, apply
-    a "spike straight-through" gradient scaling, multiply by a learnable scalar,
-    then collapse the time axis into ``T // down_sample`` non-overlapping bins.
+    At init, output is numerically identical to the strict-reproduction version
+    (per-class scale init -> 1 + ln(2), per-entry weight init -> 1/|pool_c|,
+    bias init -> 0).
 
     Args
     ----
@@ -38,15 +40,27 @@ class LocalizedPoolReadout(nn.Module):
         self.n_classes = int(n_classes)
         self.down_sample = int(down_sample)
         self.dampening_factor = float(dampening_factor)
+
+        flat_indices, flat_class, init_weights = [], [], []
         for c, ids in enumerate(pool_ids):
             t = torch.as_tensor(ids, dtype=torch.long).reshape(-1)
             if t.numel() == 0:
                 raise ValueError(f"Pool {c} is empty")
-            self.register_buffer(f"pool_{c}", t)
-        self.scale_param = nn.Parameter(torch.zeros(1))
+            flat_indices.append(t)
+            flat_class.append(torch.full((t.numel(),), c, dtype=torch.long))
+            init_weights.append(torch.full((t.numel(),), 1.0 / float(t.numel())))
 
-    def pool_indices(self, c: int) -> torch.Tensor:
-        return getattr(self, f"pool_{c}")
+        self.register_buffer("flat_indices", torch.cat(flat_indices))
+        self.register_buffer("flat_class", torch.cat(flat_class))
+
+        # Per-entry weight inside each pool; init = 1/|pool_c| reproduces the
+        # original mean-over-pool exactly at step 0.
+        self.pool_weights = nn.Parameter(torch.cat(init_weights))
+
+        # Per-class affine. scale init 0 -> softplus(0) = ln(2) -> total
+        # 1 + ln(2) ≈ 1.693, matching the original global scale init.
+        self.scale = nn.Parameter(torch.zeros(n_classes))
+        self.bias = nn.Parameter(torch.zeros(n_classes))
 
     def forward(self, spikes: torch.Tensor) -> torch.Tensor:
         # spikes: [B, T, N]
@@ -59,14 +73,22 @@ class LocalizedPoolReadout(nn.Module):
         df = self.dampening_factor
         ds = (1.0 / df) * spikes + (1.0 - 1.0 / df) * spikes.detach()
 
-        outs = []
-        for c in range(self.n_classes):
-            ids = self.pool_indices(c)
-            t_out = ds.index_select(dim=2, index=ids).mean(dim=2)  # [B, T]
-            outs.append(t_out)
-        out = torch.stack(outs, dim=-1)  # [B, T, n_classes]
-        out = out * (1.0 + F.softplus(self.scale_param))
+        # [B, T, P] where P = sum of pool sizes.
+        gathered = ds.index_select(dim=2, index=self.flat_indices)
+        weighted = gathered * self.pool_weights.view(1, 1, -1)
 
+        # Sum entries within each class -> [B, T, n_classes].
+        idx = self.flat_class.view(1, 1, -1).expand(B, T, -1)
+        out = torch.zeros(
+            B, T, self.n_classes, device=weighted.device, dtype=weighted.dtype
+        )
+        out = out.scatter_add(2, idx, weighted)
+
+        # Per-class affine.
+        out = out * (1.0 + F.softplus(self.scale)).view(1, 1, -1)
+        out = out + self.bias.view(1, 1, -1)
+
+        # Time downsample (mean over down_sample bins).
         n_chunks = T // self.down_sample
         out = out.view(B, n_chunks, self.down_sample, self.n_classes).mean(dim=2)
-        return out  # [B, n_chunks, n_classes] (pre-softmax logits)
+        return out

@@ -8,6 +8,7 @@ import torch.nn as nn
 
 from ..common.registry import register_model
 from .billeh_column import BillehColumnTorch
+from .dvs_encoder import DVSDirectEncoder
 from .lgn_torch import TorchLGN
 from .load_sparse_torch import load_billeh_torch
 from .pool_readout import LocalizedPoolReadout
@@ -43,8 +44,16 @@ class BillehV1Classifier(nn.Module):
         # If true, keep temporal length from input instead of forcing model_config.T.
         self.use_input_t = bool(getattr(model_config, "use_input_t", False))
         self.use_lgn = bool(getattr(model_config, "use_lgn", False))
+        self.use_dvs_direct = bool(getattr(model_config, "use_dvs_direct", False))
+        if self.use_dvs_direct and self.use_lgn:
+            raise ValueError("use_dvs_direct and use_lgn are mutually exclusive")
         self.lgn_input_height = int(getattr(model_config, "lgn_input_height", 0) or 0)
         self.lgn_input_width = int(getattr(model_config, "lgn_input_width", 0) or 0)
+        # DVS direct encoder knobs (only used when use_dvs_direct=True).
+        self.dvs_image_size = int(getattr(model_config, "dvs_image_size", 0) or 0)
+        self.dvs_in_channels = int(getattr(model_config, "dvs_in_channels", 1))
+        self.dvs_encoder_hidden = int(getattr(model_config, "dvs_encoder_hidden", 16))
+        self.dvs_encoder_output_scale = float(getattr(model_config, "dvs_encoder_output_scale", 50.0))
 
         # Strict-reproduction trial timing.
         self.pre_delay = int(getattr(model_config, "pre_delay", 0))
@@ -130,6 +139,23 @@ class BillehV1Classifier(nn.Module):
             chunk_size=self.chunk_size,
             device="cpu",
         )
+
+        self.dvs_encoder = None
+        if self.use_dvs_direct:
+            if self.dvs_image_size <= 0:
+                raise ValueError("use_dvs_direct=True requires model_config.dvs_image_size > 0")
+            n_current = int(self.v1.n_receptors) * int(self.v1.n_neurons)
+            self.dvs_encoder = DVSDirectEncoder(
+                in_channels=self.dvs_in_channels,
+                image_size=self.dvs_image_size,
+                n_out=n_current,
+                T_model=self.T,
+                hidden=self.dvs_encoder_hidden,
+                output_scale=self.dvs_encoder_output_scale,
+            )
+            # input_population sparse weights are bypassed in this path; freeze
+            # them so they neither train nor receive (zero) gradient updates.
+            self.v1.input_weight_values.requires_grad_(False)
 
         # Pool ids: upstream uses pools 5..14 for the 10-class image task
         # (pools 0..4 reserved for garrett 2-class). For other class counts
@@ -315,10 +341,15 @@ class BillehV1Classifier(nn.Module):
         return (logits_chunks * m).sum(dim=1) / m.sum().clamp_min(1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x_btn = self._to_b_t_n(x)
-        x_btn = self._encode(x_btn)
-        self.v1.device = x_btn.device
-        spikes, v_mV, _ = self.v1(x_btn)
+        if self.use_dvs_direct:
+            current = self.dvs_encoder(x)            # [B, T, n_receptors*n_neurons]
+            self.v1.device = current.device
+            spikes, v_mV, _ = self.v1(current, input_is_current=True)
+        else:
+            x_btn = self._to_b_t_n(x)
+            x_btn = self._encode(x_btn)
+            self.v1.device = x_btn.device
+            spikes, v_mV, _ = self.v1(x_btn)
 
         # Convert v to normalized voltage for downstream regularization.
         vs_scale = self.v1.voltage_scale[None, None, :]

@@ -1,0 +1,20 @@
+# Tuned for DVS128Gesture (~1176 train samples). batch is small so we
+# accumulate enough optimizer steps per epoch; max_epochs is larger to
+# compensate the small per-epoch step count.
+
+batch_size_per_gpu: 2       # 4-GPU DDP × B=8 = effective 32 -> ~36 steps/epoch
+random_seed: 42
+limit_train_batches: null
+
+trainer:
+  strategy: auto
+  precision: "bf16-mixed"
+  max_epochs: 200           # ~7200 optimizer steps total at 36 steps/epoch
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: norm
+  log_every_n_steps: 5      # tighter logging since per-epoch step count is small
+  check_val_every_n_epoch: 1
+  val_check_interval: 1.0
+  enable_checkpointing: true
+  save_every_n_train_steps: 1000
+  accumulate_grad_batches: 1

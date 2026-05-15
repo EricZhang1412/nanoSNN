@@ -1,11 +1,11 @@
-batch_size_per_gpu: 4
+batch_size_per_gpu: 64
 random_seed: 42
 limit_train_batches: null     # set to 0.05 for a 5% 1-epoch smoke run
 
 trainer:
   strategy: auto
   precision: "bf16-mixed"     # bf16 NaN -> fall back to "32-true"
-  max_epochs: 100
+  max_epochs: 150
   gradient_clip_val: 1.0
   gradient_clip_algorithm: norm
   log_every_n_steps: 10

@@ -1,0 +1,21 @@
+# Tuned for the DVS direct path (billeh_v1 + DVSDirectEncoder, no LGN).
+# Lower lr than the LGN/seq variants because:
+#   - encoder is large (~27M params) on a small dataset (~9k train),
+#   - bounded-encoder + V1 surrogate dynamics are sensitive to step size,
+#   - 1e-3 caused magnitude blowup (spike rate 20 -> 124 Hz in our run).
+
+lr: 2e-4
+beta1: 0.9
+beta2: 0.999
+weight_decay: 0.01
+scheduler: cosine
+warmup_epochs: 2
+min_lr_ratio: 0.01
+
+# Keep rate / voltage regularization off until the cls path is verified to
+# escape 10% on this task. Re-enable with small coefficients once stable.
+rate_cost: 0.0
+voltage_cost: 0.0
+huber_kappa: 0.002
+
+target_rates_path: ""

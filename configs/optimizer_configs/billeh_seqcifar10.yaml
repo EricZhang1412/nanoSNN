@@ -10,8 +10,8 @@ min_lr_ratio: 0.01
 # rate-cost as billeh_mnist; required to keep V1 at biological firing rates
 # (~10-30 Hz). Without this, billeh_v1 saturates because the random initial
 # weights + Dale's law alone do not bound population rate.
-rate_cost: 0.1
-voltage_cost: 1.0e-5
+rate_cost: 0.0
+voltage_cost: 0.0
 huber_kappa: 0.002
 
 # Empty -> use <model_config.billeh_data_dir>/garrett_firing_rates.pkl.

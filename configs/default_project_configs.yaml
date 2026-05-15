@@ -1,1 +1,1 @@
-output_dir: ./exp/outputs-lgn-mnist
+output_dir: ./exp/outputs-v1-DVS128Gesture-fullNeurons

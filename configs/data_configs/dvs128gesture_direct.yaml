@@ -1,0 +1,32 @@
+name: dvs128gesture
+root: /data2/dataset/dvs128gesture
+num_classes: 11
+image_size: 48           # downsample from native 128 to match cifar10dvs encoder shape
+in_channels: 1
+is_event: true
+T: 16                    # T == frames_number; defensive fallback if frames_number is dropped
+
+# IMPORTANT: spikingjelly cannot auto-download DVS128Gesture. Place
+# DvsGesture.tar.gz under <root>/download/ before first run.
+event_data_type: frame
+frames_number: 16
+split_by: number
+
+# DVS-LGN transform handles polarity collapse + bilinear resize + magnitude norm
+# (used by both LGN and direct paths). Direct path skips the LGN module itself
+# but consumes the same [T, 1, 48, 48] frames.
+transform_type: dvs_lgn
+polarity_mode: signed
+magnitude_norm: per_sample
+
+num_workers: 4
+pin_memory: true
+
+# Training-time augmentation.
+# NOTE: dvs_aug_hflip must stay 0 for DVS128Gesture — classes 1/2 ("right/left
+# hand wave"), 3/4 ("right arm cw/ccw") and 5/6 ("left arm cw/ccw") are
+# horizontally mirrored versions of each other. hflip would relabel them.
+dvs_aug: true
+dvs_aug_hflip: 0.0
+dvs_aug_crop_pad: 2      # ±8% spatial shift
+dvs_aug_t_shift: 2       # ±12% temporal jitter, OK for gestures

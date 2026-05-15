@@ -1,0 +1,52 @@
+name: billeh_v1
+T: 1024                  # K-replay: 16 DVS frames × 64 timesteps each
+num_classes: 11
+in_channels: 1
+
+# Trial timing matches the LGN variant so the readout response window is
+# identical. Chunk 0 (the pre_delay) is masked out of the chunked NLL loss.
+pre_delay: 64
+post_delay: 0
+response_window_len: 0
+down_sample: 64
+
+# Billeh V1 backbone setup. n_input is still loaded from the connectome (the
+# input_population sparse projection exists but is bypassed and frozen by the
+# direct path).
+billeh_data_dir: /data2/dataset/LGN_GLIF_Models/new_0505/GLIF_network2
+n_neurons: 51798
+neurons_per_output: 30
+localized_readout: false
+full_core: false
+train_v1: true
+seed: 3407
+use_input_t: true
+auto_n_input_from_in_channels: false
+
+# === DVS direct encoder: bypass LGN entirely. ===
+use_lgn: false
+use_dvs_direct: true
+dvs_image_size: 48        # matches data_config.image_size
+dvs_in_channels: 1        # signed-diff polarity collapse -> 1 channel
+
+# hidden=8 instead of cifar10dvs's 16: DVS128Gesture has ~1176 train samples
+# (8x fewer than cifar10dvs), so we shrink the encoder.proj Linear from
+# 27.6M to 13.8M params to reduce overfit risk.
+dvs_encoder_hidden: 8
+
+# Bounded encoder output (LayerNorm + tanh + fixed scale). scale=0.5 was
+# calibrated for cifar10dvs at hidden=16; gesture data has different event
+# density so smoke-probe and recalibrate if init-time spike rate is far from
+# ~20 Hz.
+dvs_encoder_output_scale: 0.5
+
+# Identity / scale knobs are unused on the direct path (no LGN).
+encoding: identity
+encoding_gain: 1.0
+lgn_input_scale: 1.0
+
+dampening_factor: 0.3
+# Wider surrogate gradient: at v_scaled=1 the grad coefficient is exp(-1)*0.3
+# = 0.11 instead of exp(-4)*0.3 = 0.005 with sigma=0.5.
+gauss_std: 1.0
+chunk_size: 64

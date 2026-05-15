@@ -24,13 +24,4 @@ split_seed: 42
 num_workers: 4
 pin_memory: true
 
-# Training-time augmentation (no effect on val/test). Enable to fight the
-# encoder's overfit on the 9k cifar10dvs training set.
-dvs_aug: true
-dvs_aug_hflip: 0.5
-# pad=4 on 48x48 = ±17% shift (too strong, killed train acc).
-# pad=2 = ±8% shift, lighter and lets model fit train while still regularizing.
-dvs_aug_crop_pad: 2
-# t_shift=2 on T=16 = ±12% temporal jitter (too strong for DVS event order).
-# t_shift=1 = ±6% temporal jitter, keeps causal structure mostly intact.
-dvs_aug_t_shift: 1
+magnitude_norm: none      # 让事件计数原值直接进 LGN 

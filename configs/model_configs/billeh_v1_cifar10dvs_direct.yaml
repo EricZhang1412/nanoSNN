@@ -1,0 +1,49 @@
+name: billeh_v1
+T: 1024                  # K-replay: 16 DVS frames × 64 timesteps each
+num_classes: 10
+in_channels: 1
+
+# Trial timing matches the LGN variant so the readout response window is
+# identical.
+pre_delay: 64
+post_delay: 0
+response_window_len: 0
+down_sample: 64
+
+# Billeh V1 backbone setup. n_input is still loaded from the connectome
+# (the input_population sparse projection exists but is bypassed by the
+# direct path; its parameters are frozen).
+billeh_data_dir: /data2/dataset/LGN_GLIF_Models/new_0505/GLIF_network2
+n_neurons: 3000
+neurons_per_output: 30
+localized_readout: false
+full_core: false
+train_v1: true
+seed: 3407
+use_input_t: true
+auto_n_input_from_in_channels: false
+
+# === DVS direct encoder: bypass LGN entirely. ===
+use_lgn: false
+use_dvs_direct: true
+dvs_image_size: 48        # matches data_config.image_size
+dvs_in_channels: 1        # signed-diff polarity collapse -> 1 channel
+dvs_encoder_hidden: 16    # 16 -> 32 -> 64 conv channels, ~27M params total
+# Bounded encoder output: proj -> LayerNorm -> tanh -> * output_scale.
+# Magnitude is independent of proj.weight (LayerNorm normalizes), so the
+# encoder cannot blow up V1's input during training.
+# scale=0.5 lands fresh init at ~20 Hz; sweep to recalibrate if you change
+# image_size, in_channels, or n_neurons.
+dvs_encoder_output_scale: 0.5
+
+# Identity / scale knobs irrelevant on this path (no LGN).
+encoding: identity
+encoding_gain: 1.0
+lgn_input_scale: 1.0
+
+dampening_factor: 0.3
+# Wider surrogate gradient: at v_scaled=1 the grad coefficient is exp(-1)*0.3
+# = 0.11 instead of exp(-4)*0.3 = 0.005 with sigma=0.5. Gives gradient room
+# when V1 transiently enters higher firing during training.
+gauss_std: 1.0
+chunk_size: 64

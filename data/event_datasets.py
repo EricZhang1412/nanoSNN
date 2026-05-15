@@ -471,9 +471,10 @@ def build_event_dataset(data_config, split: str):
     name = _dataset_name(data_config)
     root = os.path.expanduser(getattr(data_config, "root", "./datasets"))
     transform_type = str(getattr(data_config, "transform_type", "default")).lower()
+    is_train = split == "train"
     if transform_type == "dvs_lgn":
         from .transforms import build_dvs_lgn_transform
-        transform = build_dvs_lgn_transform(data_config)
+        transform = build_dvs_lgn_transform(data_config, is_train=is_train)
     else:
         transform = build_event_transform(data_config)
     kwargs = _event_kwargs(data_config)

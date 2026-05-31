@@ -1,0 +1,13 @@
+# Gate 1 pilot — DVS128-Gesture data config (overrides T=16 explicitly).
+name: dvs128gesture
+root: ./data/dvs128gesture
+num_classes: 11
+image_size: 128
+in_channels: 2
+is_event: true
+T: 16
+frames_number: 16
+split_by: number    # spikingjelly: split events into 16 equal-count frames
+num_workers: 4
+pin_memory: true
+train_drop_last: true

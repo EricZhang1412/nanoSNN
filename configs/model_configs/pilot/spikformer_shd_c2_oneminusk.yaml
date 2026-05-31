@@ -1,0 +1,18 @@
+name: spikformer_audio
+T: 100
+num_classes: 20
+in_channels: 1
+n_in: 700
+token_count: 70
+embed_dim: 256
+depth: 2
+num_heads: 4
+mlp_ratio: 4.0
+
+attention_type: c2_oneminusk
+
+neuron_type: lif
+tau: 2.0
+v_threshold: 1.0
+detach_reset: true
+surrogate: atan

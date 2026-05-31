@@ -41,6 +41,7 @@ def infer_num_classes(data_config, dataset=None) -> int:
         "dvs128gesture": 11,
         "imagenet": 1000,
         "imagefolder": 1000,
+        "shd": 20,
     }
     if name not in fallback:
         raise ValueError(f"Cannot infer num_classes for dataset {name}")
@@ -50,9 +51,24 @@ def infer_num_classes(data_config, dataset=None) -> int:
 def event_collate_fn(batch):
     frames, targets = default_collate(batch)
     if frames.ndim == 5:
+        # [B, T, C, H, W] → [T, B, C, H, W]
+        frames = frames.transpose(0, 1).contiguous()
+    return frames, targets
+
+
+def shd_collate_fn(batch):
+    """SHD frames are [T, 1, 700]; after default_collate → [B, T, 1, 700].
+
+    Transpose to [T, B, 1, 700] so downstream code sees the standard
+    `time-first` convention used by all other event datasets in this repo.
+    """
+    frames, targets = default_collate(batch)
+    if frames.ndim == 4:
         frames = frames.transpose(0, 1).contiguous()
     return frames, targets
 
 
 def build_collate_fn(data_config):
+    if _dataset_name(data_config) == "shd":
+        return shd_collate_fn
     return event_collate_fn if is_event_dataset(data_config) else None

@@ -1,0 +1,24 @@
+# Gate 1 pilot — DVS128-Gesture, condition C3 (MGA membrane-gated attention).
+#
+# γ-gate input = K *pre-threshold membrane* pooled over tokens (NOT K spikes).
+# β-gate input = scalar K spike rate per (B, head).
+# Decay path uses bit-shift 2^-k_bits so the attention recurrence is multiply-free.
+name: spikformer
+T: 16
+num_classes: 11
+image_size: 128
+patch_size: 16
+in_channels: 2
+embed_dim: 256
+depth: 2
+num_heads: 4
+mlp_ratio: 4.0
+
+attention_type: c3_mga
+mga_k_bits: 3   # 2^-3 = 1/8; hardware path: S - (S >> 3)
+
+neuron_type: lif
+tau: 2.0
+v_threshold: 1.0
+detach_reset: true
+surrogate: atan

@@ -11,6 +11,12 @@ from torchvision import datasets
 from torchvision.transforms import functional as TF
 from spikingjelly.datasets.cifar10_dvs import CIFAR10DVS
 from spikingjelly.datasets.dvs128_gesture import DVS128Gesture
+try:
+    from spikingjelly.datasets.shd import SpikingHeidelbergDigits
+    _HAS_SHD = True
+except ImportError:
+    SpikingHeidelbergDigits = None  # type: ignore[assignment]
+    _HAS_SHD = False
 
 from .transforms import build_event_transform
 
@@ -22,6 +28,7 @@ EVENT_DATASETS = {
     "sequential_mnist",
     "seqmnist",
     "billeh_mnist_lgn",
+    "shd",
 }
 
 
@@ -276,6 +283,30 @@ def build_event_dataset(data_config, split: str):
     if name == "dvs128gesture":
         is_train = split == "train"
         return DVS128Gesture(root=root, train=is_train, transform=transform, target_transform=None, **kwargs)
+
+    if name == "shd":
+        if not _HAS_SHD:
+            raise ImportError(
+                "SHD dataset support requires spikingjelly.datasets.shd; install spikingjelly>=0.0.0.14"
+            )
+        is_train = split == "train"
+        # SHD: data_type='frame' with frames_number=T and split_by='time' produces
+        # numpy arrays of shape (T, 1, 700).  We pass the standard transform.
+        shd_kwargs = {
+            "data_type": getattr(data_config, "event_data_type", "frame"),
+            "frames_number": getattr(data_config, "frames_number", getattr(data_config, "T", 100)),
+            "split_by": getattr(data_config, "split_by", "time"),
+            "duration": getattr(data_config, "duration", None),
+            "custom_integrate_function": getattr(data_config, "custom_integrate_function", None),
+            "custom_integrated_frames_dir_name": getattr(data_config, "custom_integrated_frames_dir_name", None),
+        }
+        return SpikingHeidelbergDigits(
+            root=root,
+            train=is_train,
+            transform=transform,
+            target_transform=None,
+            **shd_kwargs,
+        )
 
     if name == "ucr":
         dataset_name = str(getattr(data_config, "dataset", "")).strip()

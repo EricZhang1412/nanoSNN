@@ -1,0 +1,19 @@
+# Gate 1 pilot — SHD, condition C0.
+name: spikformer_audio
+T: 100
+num_classes: 20
+in_channels: 1
+n_in: 700           # SHD channels
+token_count: 70     # 700 / 70 = 10 channels per token
+embed_dim: 256
+depth: 2
+num_heads: 4
+mlp_ratio: 4.0
+
+attention_type: c0_sdla
+
+neuron_type: lif
+tau: 2.0
+v_threshold: 1.0
+detach_reset: true
+surrogate: atan

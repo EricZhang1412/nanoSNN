@@ -1,0 +1,16 @@
+# Gate 1 pilot — DVS128 training (200 epochs, batch 16 per H100).
+batch_size_per_gpu: 16
+random_seed: 42   # override on CLI for seed sweep (123, 2024)
+
+trainer:
+  strategy: auto
+  precision: "bf16-mixed"   # bf16 mixed on H100, fp32 accumulation
+  max_epochs: 200
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: norm
+  log_every_n_steps: 20
+  check_val_every_n_epoch: 1
+  val_check_interval: 1.0
+  enable_checkpointing: true
+  save_every_n_train_steps: 1000
+  accumulate_grad_batches: 1

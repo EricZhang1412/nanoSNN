@@ -1,0 +1,8 @@
+# Gate 1 pilot — DVS128 optimizer (AdamW, lr=1e-3, wd=1e-2, cosine, warmup=10).
+lr: 1.0e-3
+beta1: 0.9
+beta2: 0.999
+weight_decay: 0.01
+scheduler: cosine
+warmup_epochs: 10
+min_lr_ratio: 0.01

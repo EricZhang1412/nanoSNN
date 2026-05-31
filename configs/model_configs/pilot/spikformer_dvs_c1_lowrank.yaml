@@ -1,0 +1,20 @@
+# Gate 1 pilot — DVS128-Gesture, condition C1 (SpikingBrain-7B low-rank gate).
+name: spikformer
+T: 16
+num_classes: 11
+image_size: 128
+patch_size: 16
+in_channels: 2
+embed_dim: 256
+depth: 2
+num_heads: 4
+mlp_ratio: 4.0
+
+attention_type: c1_lowrank
+gate_rank: 16   # SpikingBrain-7B default r=16
+
+neuron_type: lif
+tau: 2.0
+v_threshold: 1.0
+detach_reset: true
+surrogate: atan

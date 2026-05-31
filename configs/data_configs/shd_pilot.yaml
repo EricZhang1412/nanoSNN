@@ -1,0 +1,21 @@
+# Gate 1 pilot — SHD (Spiking Heidelberg Digits) data config.
+name: shd
+root: ./data/shd
+num_classes: 20
+in_channels: 1
+is_event: true
+
+# spikingjelly SHD frame-integration params
+event_data_type: frame
+frames_number: 100
+split_by: time     # 100 equal-time bins → ~10 ms per bin
+T: 100
+
+# Augmentation
+augment_time_shift: true
+time_shift: 5
+binarize: true     # snap to 0/1
+
+num_workers: 4
+pin_memory: true
+train_drop_last: true

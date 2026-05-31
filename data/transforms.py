@@ -119,6 +119,39 @@ def build_eval_transform(data_config):
 
 def build_event_transform(data_config):
     scale = float(getattr(data_config, "event_scale", 1.0))
+    name = _dataset_name(data_config)
+
+    # SHD-specific: 1D frames [T, 1, 700], optional random temporal shift in train
+    if name == "shd":
+        time_shift = int(getattr(data_config, "time_shift", 5))
+        is_event = bool(getattr(data_config, "is_event", True))  # use to gate aug if needed
+        do_shift = bool(getattr(data_config, "augment_time_shift", True))
+
+        def _shd_transform(frames):
+            if isinstance(frames, np.ndarray):
+                tensor = torch.from_numpy(frames)
+            elif torch.is_tensor(frames):
+                tensor = frames
+            else:
+                tensor = torch.tensor(frames)
+            tensor = tensor.float()
+            # SHD frames are produced by spikingjelly as either [T, 700] or [T, 1, 700].
+            if tensor.ndim == 2:
+                tensor = tensor.unsqueeze(1)  # [T, 1, 700]
+            if do_shift and tensor.shape[0] > 2 * time_shift + 1 and time_shift > 0:
+                shift = int(torch.randint(-time_shift, time_shift + 1, (1,)).item())
+                if shift != 0:
+                    tensor = torch.roll(tensor, shifts=shift, dims=0)
+                    # Zero-pad the rolled-in region to avoid wrap-around artefacts.
+                    if shift > 0:
+                        tensor[:shift] = 0.0
+                    else:
+                        tensor[shift:] = 0.0
+            # Clamp to {0, 1} so the downstream LIF sees binary spikes.
+            tensor = (tensor > 0).float() if bool(getattr(data_config, "binarize", True)) else tensor
+            return tensor * scale
+
+        return _shd_transform
 
     def _transform(frames):
         if isinstance(frames, np.ndarray):

@@ -8,6 +8,7 @@ from spikingjelly.activation_based import base, layer
 
 from ..common.spike_ops import build_neuron, temporal_mean
 from ..common.registry import register_model
+from .gate_attention import build_gated_attention, list_gated_attention_types
 
 
 def _bn1d(x: torch.Tensor, bn: nn.BatchNorm1d) -> torch.Tensor:
@@ -371,8 +372,13 @@ class SpikformerBlock(nn.Module):
             self.attn = SpikeSelfAttention(dim, num_heads, model_config)
         elif attention_type == "psp_linear":
             self.attn = PSPGatedLinearSpikeSelfAttention(dim, num_heads, model_config)
+        elif attention_type in list_gated_attention_types():
+            self.attn = build_gated_attention(attention_type, dim, num_heads, model_config)
         else:
-            raise ValueError(f"Unsupported attention_type: {attention_type}")
+            raise ValueError(
+                f"Unsupported attention_type: {attention_type}. "
+                f"Allowed: quadratic, psp_linear, {list_gated_attention_types()}"
+            )
         mlp_hidden = int(dim * mlp_ratio)
 
         self.fc1_linear = nn.Linear(dim, mlp_hidden)
@@ -427,4 +433,99 @@ class Spikformer(nn.Module):
             x = blk(x)
         x = x.mean(dim=2)         # [T, B, C]
         x = temporal_mean(x)      # [B, C]
+        return self.head(x)
+
+
+# ---------------------------------------------------------------------------
+# SpikformerAudio: 1D Spikformer for SHD (Spiking Heidelberg Digits).
+#
+# Input is [T, B, 1, N_in] where N_in = 700 (SHD channels) and T = bins.
+# The audio frontend tokenizes channels via a 1D conv stem and produces
+# [T, B, N_tokens, embed_dim] for the standard SpikformerBlock stack.
+#
+# Designed so the same SpikformerBlock (and therefore the same C0–C3 attention
+# variants) can be reused for the audio task, keeping the only swappable
+# component the linear-attention module — per pilot §2 (isolation).
+# ---------------------------------------------------------------------------
+
+
+class AudioConvStem(nn.Module):
+    """1D conv stem: [T, B, 1, N_in] → [T, B, N_tokens, embed_dim]."""
+
+    def __init__(self, in_channels: int, embed_dim: int, n_in: int,
+                 token_count: int, model_config):
+        super().__init__()
+        self.in_channels = in_channels
+        self.embed_dim = embed_dim
+        self.token_count = int(token_count)
+        if n_in % self.token_count != 0:
+            raise ValueError(
+                f"Audio frontend requires n_in ({n_in}) divisible by token_count ({token_count})"
+            )
+        self.patch_len = n_in // self.token_count
+
+        # 2-layer LIF conv stem on the channel axis.
+        hidden = embed_dim // 2
+        self.conv1 = nn.Conv1d(in_channels, hidden, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm1d(hidden)
+        self.lif1 = build_neuron(model_config)
+
+        self.conv2 = nn.Conv1d(hidden, embed_dim, kernel_size=self.patch_len,
+                               stride=self.patch_len, bias=False)
+        self.bn2 = nn.BatchNorm1d(embed_dim)
+        self.lif2 = build_neuron(model_config)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: [T, B, C, N_in]   (C = in_channels, typically 1)
+        T, B, C, N_in = x.shape
+        x = rearrange(x, "T B C N -> (T B) C N").contiguous()
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = rearrange(x, "(T B) C N -> T B C N", T=T, B=B).contiguous()
+        x = self.lif1(x)
+        x = rearrange(x, "T B C N -> (T B) C N").contiguous()
+
+        x = self.conv2(x)              # [(T B), embed_dim, token_count]
+        x = self.bn2(x)
+        x = rearrange(x, "(T B) C N -> T B C N", T=T, B=B).contiguous()
+        x = self.lif2(x)
+        # → [T, B, N_tokens, embed_dim]
+        return rearrange(x, "T B C N -> T B N C").contiguous()
+
+
+@register_model("spikformer_audio")
+class SpikformerAudio(nn.Module):
+    """1D Spikformer for SHD (audio).
+
+    Expected input shape: [T, B, in_channels, N_in].
+    """
+
+    def __init__(self, model_config):
+        super().__init__()
+        self.T = int(getattr(model_config, "T", 100))
+        embed_dim = int(getattr(model_config, "embed_dim", 256))
+        depth = int(getattr(model_config, "depth", 2))
+        num_heads = int(getattr(model_config, "num_heads", 4))
+        mlp_ratio = float(getattr(model_config, "mlp_ratio", 4.0))
+        num_classes = int(getattr(model_config, "num_classes", 20))
+        in_channels = int(getattr(model_config, "in_channels", 1))
+        n_in = int(getattr(model_config, "n_in", 700))
+        token_count = int(getattr(model_config, "token_count", 70))
+
+        self.patch_embed = AudioConvStem(in_channels, embed_dim, n_in, token_count, model_config)
+        self.blocks = nn.ModuleList([
+            SpikformerBlock(embed_dim, num_heads, mlp_ratio, model_config)
+            for _ in range(depth)
+        ])
+        self.head = nn.Linear(embed_dim, num_classes)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # Accept [T, B, C, N] or [T, B, N] (will lift the channel dim).
+        if x.ndim == 3:
+            x = x.unsqueeze(2)  # [T, B, 1, N]
+        x = self.patch_embed(x)          # [T, B, N_tokens, C]
+        for blk in self.blocks:
+            x = blk(x)
+        x = x.mean(dim=2)                # [T, B, C]
+        x = temporal_mean(x)             # [B, C]
         return self.head(x)

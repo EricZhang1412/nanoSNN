@@ -1,3 +1,3 @@
-from .model import Spikformer
+from .model import Spikformer, SpikformerAudio
 
-__all__ = ["Spikformer"]
+__all__ = ["Spikformer", "SpikformerAudio"]

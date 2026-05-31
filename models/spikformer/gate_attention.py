@@ -115,13 +115,11 @@ class _GatedLinearAttentionBase(nn.Module):
     def _project_k(self, x: torch.Tensor):
         """Project K and (if needed) expose pre-threshold membrane.
 
-        For conditions C0/C1/C2 we go through the spikingjelly LIF as usual.
-        For C3 we replicate the LIF dynamics manually so the *pre-threshold*
-        membrane potential can be returned alongside the spike output.  Both
-        paths use the same hyper-parameters (tau, V_th, surrogate) so the
-        spike output is mathematically equivalent up to reset details
-        (we use soft reset in the manual path; the pre-mem is the membrane
-        immediately before thresholding, which is what the pilot spec requires).
+        For all conditions C0/C1/C2/C3 the K spike output is identical to a
+        spikingjelly `LIFNode(v_reset=0.0)` so isolation (pilot §2) holds.
+        For C3 we replicate the same dynamics manually so the *pre-threshold*
+        membrane potential `u_pre = (1 - 1/tau) * u_{t-1}_post_reset + x_t/tau`
+        can be exposed alongside the spike for the γ-gate (per pilot §1).
         """
         T, B, N, C = x.shape
         H, D = self.num_heads, self.head_dim
@@ -134,19 +132,23 @@ class _GatedLinearAttentionBase(nn.Module):
             k = rearrange(k, "T B N (H D) -> T B H N D", H=H, D=D)
             return k, None
 
-        # Manual LIF for K, exposes pre-threshold membrane.
+        # Manual LIF matching spikingjelly LIFNode (v_reset=0.0, hard reset):
+        #   charge: u_t = (1 - 1/tau) * u_{t-1} + x_t / tau
+        #   fire:   s_t = heaviside(u_t - V_th)            (record u_t as u_pre)
+        #   reset:  u_t = u_t * (1 - s_t)                  (hard reset to 0)
         alpha = 1.0 - 1.0 / self._k_tau
+        inv_tau = 1.0 / self._k_tau
         V_th = self._k_v_threshold
         u = k_pre.new_zeros(k_pre.shape[1:])
         K_seq = []
         Upre_seq = []
         for t in range(T):
-            u = alpha * u + k_pre[t]
-            Upre_seq.append(u)
+            u = alpha * u + inv_tau * k_pre[t]
+            Upre_seq.append(u)                              # pre-threshold membrane
             s = self._k_surrogate(u - V_th)
             K_seq.append(s)
             s_reset = s.detach() if self._k_detach_reset else s
-            u = u - s_reset * V_th  # soft reset
+            u = u * (1.0 - s_reset)                         # hard reset
         K = torch.stack(K_seq, dim=0)          # [T, B, N, C]
         Upre = torch.stack(Upre_seq, dim=0)    # [T, B, N, C]
         K = rearrange(K, "T B N (H D) -> T B H N D", H=H, D=D)

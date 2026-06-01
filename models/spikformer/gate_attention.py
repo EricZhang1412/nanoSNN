@@ -346,19 +346,47 @@ class LinearAttentionC3(_GatedLinearAttentionBase):
         self.log_tau_gamma_raw = nn.Parameter(torch.full((H, D), init_log_tau))
         self.log_tau_beta_raw = nn.Parameter(torch.full((H,), init_log_tau))
 
-        # Initial threshold via softplus(V_raw) = 1.0  → V_raw = log(e - 1) ≈ 0.5413.
-        init_V_raw = math.log(math.e - 1.0)
-        self.V_gamma_raw = nn.Parameter(torch.full((H, D), init_V_raw))
-        self.V_beta_raw = nn.Parameter(torch.full((H,), init_V_raw))
+        # Threshold parameterisation.
+        #
+        # γ-gate input = K *pre-threshold membrane* (mean over tokens of LIF
+        # membrane).  After BN-centred K projection the signed mean is near
+        # zero (slightly negative due to hard-reset asymmetry).  Forcing
+        # V_γ > 0 (via softplus) leaves γ permanently dead at init.  We
+        # therefore use an *unconstrained* V_γ, initialised to 0 so γ fires
+        # ≈ 0.5 at init.  The optimiser can move V_γ anywhere on the real line.
+        #
+        # β-gate input = K spike rate (always ≥ 0).  Keep softplus to enforce
+        # V_β > 0, init at 0.05 → β-rate ≈ 0.5–0.7 at init (lots of writes so
+        # S can carry signal during early training).
+        init_V_gamma = float(getattr(model_config, "mga_init_V_gamma", 0.0))
+        self.V_gamma = nn.Parameter(torch.full((H, D), init_V_gamma))
+
+        init_V_beta = float(getattr(model_config, "mga_init_V_beta", 0.05))
+        beta_raw = math.log(math.expm1(init_V_beta))
+        self.V_beta_raw = nn.Parameter(torch.full((H,), beta_raw))
+
+        # RWKV-7-style input normalisation on the γ-gate input.  RWKV-7
+        # applies GroupNorm/RMSNorm before its gate so the gate sees a
+        # stationary distribution regardless of upstream re-parameterisation
+        # — without it, the gate's learning dynamics are coupled to the
+        # exact K-projection / BN stats and become hard to tune.
+        # Per-head LayerNorm over the head-dim D matches RWKV-7's convention
+        # (norm over the channel dim of each token).
+        use_gate_norm = bool(getattr(model_config, "mga_gate_input_norm", True))
+        self.gate_input_norm = nn.LayerNorm(D) if use_gate_norm else None
 
         # Same surrogate as Q/K/V LIFs (reuse self._k_surrogate).
         self._gate_surrogate = self._k_surrogate
 
+        # Running γ/β firing-rate stats for logging (populated each forward).
+        self.register_buffer("last_gamma_rate", torch.tensor(0.0), persistent=False)
+        self.register_buffer("last_beta_rate", torch.tensor(0.0), persistent=False)
+
     def _gate_params(self):
         tau_gamma = torch.exp(self.log_tau_gamma_raw)             # [H, D] in (0, ∞)
         tau_beta = torch.exp(self.log_tau_beta_raw)               # [H]
-        V_gamma = torch.nn.functional.softplus(self.V_gamma_raw)  # [H, D] in (0, ∞)
-        V_beta = torch.nn.functional.softplus(self.V_beta_raw)    # [H]
+        V_gamma = self.V_gamma                                    # [H, D] unconstrained
+        V_beta = torch.nn.functional.softplus(self.V_beta_raw)    # [H] in (0, ∞)
         return tau_gamma, V_gamma, tau_beta, V_beta
 
     def _run_state_update(self, K, V, K_membrane=None):
@@ -370,6 +398,10 @@ class LinearAttentionC3(_GatedLinearAttentionBase):
 
         # γ-gate input: pool pre-threshold K membrane over tokens → [T, B, H, D]
         u_k_pool = K_membrane.mean(dim=-2)
+        if self.gate_input_norm is not None:
+            # RWKV-7-style per-head LayerNorm so γ sees a stationary input
+            # distribution (mean 0, std 1 per (T, B, H) sample over D).
+            u_k_pool = self.gate_input_norm(u_k_pool)
         # β-gate input: scalar K spike rate per (B, H) → [T, B, H]
         r_pool = K.float().mean(dim=(-2, -1))
 
@@ -380,6 +412,9 @@ class LinearAttentionC3(_GatedLinearAttentionBase):
         S_prev = KV.new_zeros(B, H, D, D)
         u_gamma = KV.new_zeros(B, H, D)
         u_beta = KV.new_zeros(B, H)
+
+        gamma_fire_sum = KV.new_zeros(())
+        beta_fire_sum = KV.new_zeros(())
 
         for t in range(T):
             # γ LIF: pre-threshold update, fire, soft reset
@@ -394,12 +429,20 @@ class LinearAttentionC3(_GatedLinearAttentionBase):
             s_beta_reset = s_beta.detach() if self._k_detach_reset else s_beta
             u_beta = u_beta - s_beta_reset * V_beta
 
+            gamma_fire_sum = gamma_fire_sum + s_gamma.detach().float().mean()
+            beta_fire_sum = beta_fire_sum + s_beta.detach().float().mean()
+
             # Gated state update (multiply-free attention path):
             #   S = S_prev - s_gamma * (S_prev >> k)  + s_beta * KV
             decay_mask = s_gamma * self.shift_scale              # [B, H, D]
             alpha_eff = 1.0 - decay_mask                         # [B, H, D]
             S_prev = alpha_eff.unsqueeze(-1) * S_prev + s_beta.unsqueeze(-1).unsqueeze(-1) * KV[t]
             S_seq.append(S_prev)
+
+        # Cache mean firing rates so the Lightning loop can log them.
+        with torch.no_grad():
+            self.last_gamma_rate.copy_(gamma_fire_sum / float(T))
+            self.last_beta_rate.copy_(beta_fire_sum / float(T))
 
         return torch.stack(S_seq, dim=0)
 

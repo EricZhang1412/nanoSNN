@@ -163,9 +163,11 @@ def test_param_counts():
     print(f"  Δ(C2 - C0) = {delta_c2}  (expected 0)")
     assert delta_c2 == 0, "C2 should have zero extra params vs. C0"
 
-    # C3: log_tau_gamma_raw[H,D] + log_tau_beta_raw[H] + V_gamma_raw[H,D] + V_beta_raw[H]
+    # C3: log_tau_gamma_raw[H,D] + log_tau_beta_raw[H]
+    #     + V_gamma[H,D]            + V_beta_raw[H]
+    #     + gate_input_norm: weight[D] + bias[D]  (RWKV-7-style LayerNorm)
     delta_c3 = counts["c3_mga"] - counts["c0_sdla"]
-    expected_c3 = 2 * H * D + 2 * H
+    expected_c3 = 2 * H * D + 2 * H + 2 * D
     print(f"  Δ(C3 - C0) = {delta_c3}  (expected {expected_c3})")
     assert delta_c3 == expected_c3, f"C3 param mismatch: got {delta_c3}, expected {expected_c3}"
 

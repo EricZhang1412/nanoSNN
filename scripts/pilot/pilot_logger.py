@@ -181,9 +181,9 @@ class PilotJSONLogger(Callback):
     def _gate_param_count(model) -> int:
         """Sum of parameters whose qualified name suggests they belong to a gate."""
         gate_keywords = (
-            "gate_up", "gate_down",        # C1
-            "log_tau_gamma", "log_tau_beta",  # C3
-            "V_gamma_raw", "V_beta_raw",      # C3
+            "gate_up", "gate_down",              # C1
+            "log_tau_gamma", "log_tau_beta",     # C3
+            "V_gamma", "V_beta_raw",             # C3 (V_gamma unconstrained, V_beta via softplus)
         )
         total = 0
         for name, p in model.named_parameters():

@@ -219,6 +219,30 @@ class LitVisionSNN(L.LightningModule):
                 sync_dist=sync,
             )
 
+        # MGA (C3) gate firing-rate diagnostics — logs `<split>/gate_gamma_rate`
+        # and `<split>/gate_beta_rate` so PilotJSONLogger and TB/wandb can pick
+        # them up.  No-op if the model has no LinearAttentionC3 module.
+        gamma_rates, beta_rates = [], []
+        for mod in self.model.modules():
+            g = getattr(mod, "last_gamma_rate", None)
+            b = getattr(mod, "last_beta_rate", None)
+            if torch.is_tensor(g):
+                gamma_rates.append(g.detach())
+            if torch.is_tensor(b):
+                beta_rates.append(b.detach())
+        if gamma_rates:
+            self.log(
+                f"{split}/gate_gamma_rate",
+                torch.stack(gamma_rates).float().mean(),
+                on_step=on_step, on_epoch=True, sync_dist=sync,
+            )
+        if beta_rates:
+            self.log(
+                f"{split}/gate_beta_rate",
+                torch.stack(beta_rates).float().mean(),
+                on_step=on_step, on_epoch=True, sync_dist=sync,
+            )
+
         # Free large stashed tensors so they don't pin memory across optimizer step.
         for attr in ("last_spikes", "last_v_norm", "last_logits_chunks"):
             if hasattr(self.model, attr):

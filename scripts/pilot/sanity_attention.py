@@ -165,9 +165,10 @@ def test_param_counts():
 
     # C3: log_tau_gamma_raw[H,D] + log_tau_beta_raw[H]
     #     + V_gamma[H,D]            + V_beta_raw[H]
-    #     + gate_input_norm: weight[D] + bias[D]  (RWKV-7-style LayerNorm)
+    #     + gate_input_norm: weight[D] + bias[D]   (RWKV-7-style LayerNorm)
+    #     + log_write_scale[H]                     (Tier-2 ||S|| compensation)
     delta_c3 = counts["c3_mga"] - counts["c0_sdla"]
-    expected_c3 = 2 * H * D + 2 * H + 2 * D
+    expected_c3 = 2 * H * D + 2 * H + 2 * D + H
     print(f"  Δ(C3 - C0) = {delta_c3}  (expected {expected_c3})")
     assert delta_c3 == expected_c3, f"C3 param mismatch: got {delta_c3}, expected {expected_c3}"
 

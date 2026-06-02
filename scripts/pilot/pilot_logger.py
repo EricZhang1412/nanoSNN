@@ -184,6 +184,7 @@ class PilotJSONLogger(Callback):
             "gate_up", "gate_down",              # C1
             "log_tau_gamma", "log_tau_beta",     # C3
             "V_gamma", "V_beta_raw",             # C3 (V_gamma unconstrained, V_beta via softplus)
+            "log_write_scale",                   # C3 Tier-2 write scale
         )
         total = 0
         for name, p in model.named_parameters():

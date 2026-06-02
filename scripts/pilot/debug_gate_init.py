@@ -73,6 +73,7 @@ def main():
         if c3.gate_input_norm is not None:
             u_k_pool = c3.gate_input_norm(u_k_pool)
         r_pool = K.float().mean(dim=(-2, -1))     # [T, B, H]
+        write_scale = torch.exp(c3.log_write_scale).view(1, c3.num_heads, 1, 1)
         KV = K.transpose(-1, -2) @ V              # [T, B, H, D, D]
         S = KV.new_zeros(B_, H_, D_, D_)
         u_g = KV.new_zeros(B_, H_, D_)
@@ -85,7 +86,10 @@ def main():
             s_b = c3._gate_surrogate(u_b - V_b)
             u_b = u_b - s_b.detach() * V_b
             alpha_eff = 1.0 - s_g * c3.shift_scale
-            S = alpha_eff.unsqueeze(-1) * S + s_b.unsqueeze(-1).unsqueeze(-1) * KV[t]
+            S = (
+                alpha_eff.unsqueeze(-1) * S
+                + write_scale * s_b.unsqueeze(-1).unsqueeze(-1) * KV[t]
+            )
             rates_g.append(s_g.float().mean().item())
             rates_b.append(s_b.float().mean().item())
             u_k_pool_mags.append(u_k_pool[t].abs().mean().item())

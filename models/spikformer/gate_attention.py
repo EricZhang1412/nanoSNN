@@ -378,6 +378,26 @@ class LinearAttentionC3(_GatedLinearAttentionBase):
         # Same surrogate as Q/K/V LIFs (reuse self._k_surrogate).
         self._gate_surrogate = self._k_surrogate
 
+        # Per-head learnable write_scale (Tier-2 fix for ||S|| accumulation).
+        # Without a write scale, S asymptotes to ||KV|| / (1 - mean α_eff), which
+        # is ~6-10× per-step ||KV|| for the slow-forgetting init we use → Q@S
+        # overshoots attn_lif (v_th=0.5) and saturates / compresses information.
+        # With write_scale ≈ 1 - mean α_eff ≈ 0.125, S asymptotes back to ~||KV||
+        # (similar order of magnitude as C0's S = K^T V per step), preserving
+        # information flow.  Log-parameterised so write_scale > 0 always.
+        # NOTE: at deploy time write_scale is a per-head constant and can be
+        # absorbed into the output projection — the "multiply-free attention
+        # path" claim still holds for the inference hardware.
+        use_write_scale = bool(getattr(model_config, "mga_use_write_scale", True))
+        if use_write_scale:
+            init_ws = float(getattr(model_config, "mga_init_write_scale", 0.125))
+            self.log_write_scale = nn.Parameter(
+                torch.full((H,), math.log(init_ws))
+            )
+        else:
+            self.register_buffer("log_write_scale", torch.zeros(H), persistent=False)
+        self._use_write_scale = use_write_scale
+
         # Running γ/β firing-rate stats for logging (populated each forward).
         self.register_buffer("last_gamma_rate", torch.tensor(0.0), persistent=False)
         self.register_buffer("last_beta_rate", torch.tensor(0.0), persistent=False)
@@ -408,6 +428,9 @@ class LinearAttentionC3(_GatedLinearAttentionBase):
         # KV outer product per step
         KV = rearrange(K, "T B H N D -> T B H D N") @ V          # [T, B, H, D, D]
 
+        # Per-head write scale, shape [1, H, 1, 1] for broadcasting onto KV.
+        write_scale = torch.exp(self.log_write_scale).view(1, H, 1, 1)
+
         S_seq = []
         S_prev = KV.new_zeros(B, H, D, D)
         u_gamma = KV.new_zeros(B, H, D)
@@ -433,10 +456,14 @@ class LinearAttentionC3(_GatedLinearAttentionBase):
             beta_fire_sum = beta_fire_sum + s_beta.detach().float().mean()
 
             # Gated state update (multiply-free attention path):
-            #   S = S_prev - s_gamma * (S_prev >> k)  + s_beta * KV
+            #   S = S_prev - s_gamma * (S_prev >> k)  + write_scale · s_beta · KV
+            # write_scale is per-head constant; foldable into proj at deploy.
             decay_mask = s_gamma * self.shift_scale              # [B, H, D]
             alpha_eff = 1.0 - decay_mask                         # [B, H, D]
-            S_prev = alpha_eff.unsqueeze(-1) * S_prev + s_beta.unsqueeze(-1).unsqueeze(-1) * KV[t]
+            S_prev = (
+                alpha_eff.unsqueeze(-1) * S_prev
+                + write_scale * s_beta.unsqueeze(-1).unsqueeze(-1) * KV[t]
+            )
             S_seq.append(S_prev)
 
         # Cache mean firing rates so the Lightning loop can log them.

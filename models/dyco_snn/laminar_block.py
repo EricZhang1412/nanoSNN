@@ -43,7 +43,8 @@ class LaminarBlock(nn.Module):
         learnable_asc: bool = True,
         heterogeneous_init: bool = True,
         recurrent_enabled: bool = True,
-        rec_scale_init: float = 0.05,
+        rec_scale_init: float = 0.3,
+        proj_scale_init: float = 10.0,
     ):
         super().__init__()
         self.in_features = in_features
@@ -57,9 +58,16 @@ class LaminarBlock(nn.Module):
         # Within-block feedforward projections (no Dale constraint on stem
         # inputs since input feature signs are unconstrained; L4 itself is
         # all-excitatory, so its outward projections are positive).
+        # Default init magnitude is scaled up so neurons actually reach v_th
+        # at T=8 under default GLIF3 time constants (tau_m=20, tau_s=5).
         self.proj_in_to_l4 = nn.Linear(in_features, n_l4, bias=False)
         self.proj_l4_to_23 = nn.Linear(n_l4, self.n_23, bias=False)
         self.proj_23_to_l5 = nn.Linear(self.n_23, n_l5, bias=False)
+        with torch.no_grad():
+            for p in (self.proj_in_to_l4.weight,
+                      self.proj_l4_to_23.weight,
+                      self.proj_23_to_l5.weight):
+                p.mul_(proj_scale_init)
 
         # L2/3 recurrence (Dale): inputs are L2/3 E+I spikes; output is
         # current into L2/3 (E + I targets all share this output).

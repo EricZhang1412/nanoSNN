@@ -117,7 +117,14 @@ def _run_mode(mode, batch_size=4, T=8, verbose=False):
     assert logits.shape == (batch_size, 2), f"bad logits shape {logits.shape}"
     loss = F.cross_entropy(logits, y)
     loss.backward()
-    print(f"  loss={float(loss.item()):.4f}  spike_rate_hz={getattr(model, 'latest_spike_rate_hz', None)}")
+    spike_rate = getattr(model, "latest_spike_rate_hz", None)
+    print(f"  loss={float(loss.item()):.4f}  spike_rate_hz={spike_rate}")
+    # Sanity: network must actually fire at init, otherwise no learning signal
+    # for the recurrent path and α gate. Threshold is conservative.
+    assert spike_rate is not None and spike_rate > 0.5, (
+        f"[{mode}] network is silent at init (spike_rate_hz={spike_rate}); "
+        f"increase proj_scale_init or lower v_th"
+    )
 
     # Mode-specific gradient sanity checks.
     if mode == "d_only":

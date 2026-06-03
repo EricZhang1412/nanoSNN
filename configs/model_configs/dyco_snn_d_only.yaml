@@ -1,0 +1,27 @@
+name: dyco_snn
+T: 8
+num_classes: 2
+image_size: 32
+in_channels: 2
+
+mode: d_only            # Channel D only: heterogeneous adaptive LIF, no recurrence.
+
+# Architecture (compact for CPU smoke; scale up for GPU runs).
+n_blocks: 2
+stem_dim: 64
+n_l4: 48
+n_23e: 64
+n_23i: 16
+n_l5: 48
+
+# Channel-D switches.
+learnable_tau: true
+learnable_asc: true
+heterogeneous_init: true
+
+# Channel-C switch.
+recurrent_enabled: false
+
+# Allocation: alpha frozen at 0 -> all current via SFA path.
+alpha_init: 0.0
+alpha_learnable: false

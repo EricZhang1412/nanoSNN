@@ -1,0 +1,23 @@
+name: dyco_snn
+T: 8
+num_classes: 2
+image_size: 32
+in_channels: 2
+
+mode: ff                # Param-matched feedforward LIF stack baseline.
+
+n_blocks: 2
+stem_dim: 64
+n_l5: 48
+
+# FF-block-specific (tune ff_hidden_mult to match D+C param count).
+ff_hidden_mult: 2.0
+ff_depth: 2
+
+# The following are ignored in ff mode but kept for config compatibility.
+learnable_tau: false
+learnable_asc: false
+heterogeneous_init: false
+recurrent_enabled: false
+alpha_init: 0.0
+alpha_learnable: false

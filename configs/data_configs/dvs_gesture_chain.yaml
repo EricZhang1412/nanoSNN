@@ -1,0 +1,16 @@
+# Placeholder for DVS-Gesture-Chain. Until the chain-construction script is
+# wired up, this just points to vanilla DVS128 Gesture (11 classes). The
+# real DVS-GC builder will concatenate gestures with controlled inter-cue
+# timing; until then, do NOT use this for the actual gate-1 evaluation.
+
+name: dvs128gesture
+root: ./data/dvs128gesture
+num_classes: 11
+image_size: 128
+in_channels: 2
+is_event: true
+T: 16
+num_workers: 4
+pin_memory: true
+
+# TODO: implement DVSGestureChain dataset (concat with order labels).

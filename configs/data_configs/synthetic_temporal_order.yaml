@@ -1,0 +1,20 @@
+name: synthetic_temporal_order
+root: ./data/synthetic_temporal_order   # unused, dataset is in-memory
+num_classes: 2
+image_size: 32
+in_channels: 2
+is_event: true
+T: 8
+num_workers: 0
+pin_memory: false
+n_train: 4096
+n_val: 512
+n_test: 1024
+blob_size: 4
+min_gap: 1
+split_seed: 42
+
+# Block B counterfactual switches (off by default; flip per-eval-run).
+shuffle_time: false
+reverse_time: false
+first_last_only: false

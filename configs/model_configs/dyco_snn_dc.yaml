@@ -1,0 +1,26 @@
+name: dyco_snn
+T: 8
+num_classes: 2
+image_size: 32
+in_channels: 2
+
+mode: dc                # D + C with learnable allocation alpha.
+
+n_blocks: 2
+stem_dim: 64
+n_l4: 48
+n_23e: 64
+n_23i: 16
+n_l5: 48
+
+# Channel-D on.
+learnable_tau: true
+learnable_asc: true
+heterogeneous_init: true
+
+# Channel-C on.
+recurrent_enabled: true
+
+# Allocation: learnable per-block alpha.
+alpha_init: 0.5
+alpha_learnable: true

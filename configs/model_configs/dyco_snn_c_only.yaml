@@ -1,0 +1,26 @@
+name: dyco_snn
+T: 8
+num_classes: 2
+image_size: 32
+in_channels: 2
+
+mode: c_only            # Channel C only: plain LIF + recurrence.
+
+n_blocks: 2
+stem_dim: 64
+n_l4: 48
+n_23e: 64
+n_23i: 16
+n_l5: 48
+
+# Channel-D off.
+learnable_tau: false
+learnable_asc: false
+heterogeneous_init: false
+
+# Channel-C on.
+recurrent_enabled: true
+
+# Allocation: alpha frozen at 1 -> all current via recurrent path.
+alpha_init: 1.0
+alpha_learnable: false

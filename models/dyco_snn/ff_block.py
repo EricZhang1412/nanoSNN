@@ -21,7 +21,7 @@ class FeedforwardBlock(nn.Module):
 
     def __init__(self, in_features: int, n_l5: int = 48,
                  hidden_mult: float = 2.0, depth: int = 2,
-                 proj_scale_init: float = 10.0):
+                 proj_scale_init: float = 30.0):
         super().__init__()
         h = max(int(round(in_features * hidden_mult)), n_l5)
         dims = [in_features] + [h] * (depth - 1) + [n_l5]

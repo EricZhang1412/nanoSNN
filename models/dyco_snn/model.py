@@ -11,6 +11,11 @@ from .ff_block import FeedforwardBlock
 def _conv_stem(in_channels: int, stem_dim: int) -> nn.Module:
     """Non-spiking conv stem: [B, C, H, W] -> [B, stem_dim].
     Run per-timestep over T.
+
+    Uses max-pool (not avg) because the synthetic temporal-order task has
+    spatially sparse cue blobs (~16 / 1024 pixels). Avg-pool over the full
+    feature map crushes the signal by ~500x, which leaves downstream GLIF3
+    populations silent at init regardless of projection scale.
     """
     return nn.Sequential(
         nn.Conv2d(in_channels, 16, kernel_size=3, stride=2, padding=1, bias=False),
@@ -19,9 +24,9 @@ def _conv_stem(in_channels: int, stem_dim: int) -> nn.Module:
         nn.Conv2d(16, 32, kernel_size=3, stride=2, padding=1, bias=False),
         nn.BatchNorm2d(32),
         nn.ReLU(inplace=True),
-        nn.AdaptiveAvgPool2d(1),
-        nn.Flatten(),
-        nn.Linear(32, stem_dim, bias=True),
+        nn.AdaptiveMaxPool2d(2),    # 8x8 -> 2x2 preserves blob peaks
+        nn.Flatten(),                # 32 * 4 = 128
+        nn.Linear(128, stem_dim, bias=True),
     )
 
 

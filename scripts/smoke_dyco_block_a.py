@@ -113,6 +113,15 @@ def _run_mode(mode, batch_size=4, T=8, verbose=False):
     print(f"  input shape: {tuple(x.shape)}  label distribution: {torch.bincount(y, minlength=2).tolist()}")
     assert x.ndim == 5 and x.shape[0] == T, f"expected [T,B,C,H,W] with T={T}, got {x.shape}"
 
+    # Optional: probe stem output magnitude before running the model proper.
+    if verbose:
+        import torch as _torch
+        with _torch.no_grad():
+            T_, B_, C_, H_, W_ = x.shape
+            stem_out = model.stem(x.reshape(T_ * B_, C_, H_, W_))
+            print(f"  stem_out: mean={stem_out.mean():.4f}  std={stem_out.std():.4f}  "
+                  f"max={stem_out.max():.4f}  nonzero_frac={(stem_out.abs() > 1e-6).float().mean():.4f}")
+
     logits = lit(x)
     assert logits.shape == (batch_size, 2), f"bad logits shape {logits.shape}"
     loss = F.cross_entropy(logits, y)

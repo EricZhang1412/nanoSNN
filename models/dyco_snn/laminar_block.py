@@ -43,8 +43,8 @@ class LaminarBlock(nn.Module):
         learnable_asc: bool = True,
         heterogeneous_init: bool = True,
         recurrent_enabled: bool = True,
-        rec_scale_init: float = 0.3,
-        proj_scale_init: float = 10.0,
+        rec_scale_init: float = 0.5,
+        proj_scale_init: float = 30.0,
     ):
         super().__init__()
         self.in_features = in_features

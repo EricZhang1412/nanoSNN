@@ -57,11 +57,15 @@ def main():
     model.eval()
     with torch.no_grad():
         T, B, C, H, W = x.shape
-        # 1) Stem stats.
-        stem_out = model.stem(x.reshape(T * B, C, H, W))
-        print(f"\n[stem] out shape={tuple(stem_out.shape)}  mean={stem_out.mean():.4f}  "
-              f"std={stem_out.std():.4f}  max={stem_out.max():.4f}  "
-              f"nonzero_frac={(stem_out.abs() > 1e-6).float().mean():.4f}")
+        # 1) Stem stats. IMPORTANT: apply stem_out_scale to mirror DyCoSNN.forward.
+        stem_raw = model.stem(x.reshape(T * B, C, H, W))
+        stem_scale = float(getattr(model, "stem_out_scale", 1.0))
+        stem_out = stem_raw * stem_scale
+        print(f"\n[stem] scale={stem_scale}")
+        print(f"[stem] raw  : mean={stem_raw.mean():.4f}  std={stem_raw.std():.4f}  "
+              f"max={stem_raw.max():.4f}")
+        print(f"[stem] scaled: mean={stem_out.mean():.4f}  std={stem_out.std():.4f}  "
+              f"max={stem_out.max():.4f}  nonzero_frac={(stem_out.abs() > 1e-6).float().mean():.4f}")
         feat = stem_out.reshape(T, B, -1)
 
         # 2) Walk through block 0 manually.

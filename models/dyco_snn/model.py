@@ -57,6 +57,11 @@ class DyCoSNN(nn.Module):
 
         self.stem_dim = int(getattr(cfg, "stem_dim", 64))
         self.n_blocks = int(getattr(cfg, "n_blocks", 2))
+        # Stem outputs continuous values with std~0.05 on sparse event input,
+        # whereas inter-block projections are calibrated for binary spike
+        # inputs (std~0.2-0.3). Multiply stem output to match that scale so
+        # block 0's L4 actually fires at T<=8 without over-driving block 1+.
+        self.stem_out_scale = float(getattr(cfg, "stem_out_scale", 5.0))
 
         n_l4 = int(getattr(cfg, "n_l4", 48))
         n_23e = int(getattr(cfg, "n_23e", 64))
@@ -120,7 +125,7 @@ class DyCoSNN(nn.Module):
         T, B = x.shape[0], x.shape[1]
         # Apply stem per timestep.
         x_flat = x.reshape(T * B, *x.shape[2:])
-        feat_flat = self.stem(x_flat)        # [T*B, stem_dim]
+        feat_flat = self.stem(x_flat) * self.stem_out_scale  # [T*B, stem_dim]
         feat = feat_flat.reshape(T, B, self.stem_dim)
 
         # Distribute alphas to blocks.

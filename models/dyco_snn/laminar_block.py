@@ -45,6 +45,7 @@ class LaminarBlock(nn.Module):
         recurrent_enabled: bool = True,
         rec_scale_init: float = 0.5,
         proj_scale_init: float = 30.0,
+        v_th: float = 0.5,
     ):
         super().__init__()
         self.in_features = in_features
@@ -87,6 +88,7 @@ class LaminarBlock(nn.Module):
             learnable_tau=learnable_tau,
             learnable_asc=learnable_asc,
             heterogeneous_init=heterogeneous_init,
+            v_th=v_th,
         )
         self.pop_l4 = GLIF3Population(n_l4, **pop_kwargs)
         self.pop_23e = GLIF3Population(n_23e, **pop_kwargs)

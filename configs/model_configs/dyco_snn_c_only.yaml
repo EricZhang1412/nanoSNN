@@ -24,3 +24,8 @@ recurrent_enabled: true
 # Allocation: alpha frozen at 1 -> all current via recurrent path.
 alpha_init: 1.0
 alpha_learnable: false
+
+# Spike threshold (shared across all D/C/DC/FF arms for a fair ablation).
+# 0.5 (not 1.0): the 3-layer L4->L23->L5 GLIF3 cascade is ~1-2 steps short of
+# v_th=1.0 within T=8 and goes silent at L5; 0.5 gives margin without touching tau_m.
+v_th: 0.5

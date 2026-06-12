@@ -37,7 +37,7 @@ def main():
         n_blocks=2, stem_dim=64, n_l4=48, n_23e=64, n_23i=16, n_l5=48,
         learnable_tau=True, learnable_asc=True, heterogeneous_init=True,
         recurrent_enabled=False, alpha_init=0.0, alpha_learnable=False,
-        ff_hidden_mult=2.0, ff_depth=2, mode="d_only",
+        ff_hidden_mult=2.0, ff_depth=2, mode="d_only", v_th=0.5,
     )
     train_cfg = SimpleNamespace(batch_size_per_gpu=4, trainer=SimpleNamespace(max_epochs=1))
     opt_cfg = SimpleNamespace(lr=1e-3, weight_decay=0.0)
@@ -106,10 +106,13 @@ def main():
         print(f"\n[block 0] total L5 spikes over T=8: {z_l5_seq.sum().item()}  "
               f"avg frac: {z_l5_seq.mean().item():.4f}")
 
+    v_th = float(blk.pop_l4.v_th)
     print("\n--- HINT ---")
-    print("If l4_v.max never approaches v_th=1.0 -> input drive too weak.")
+    print(f"(v_th={v_th})")
+    print(f"If l4_v.max never approaches v_th={v_th} -> input drive too weak.")
     print("If z_l4 fires but z_23 stays 0  -> proj_l4_to_23 attenuates signal.")
-    print("If z_23 fires but z_l5 stays 0  -> proj_23_to_l5 attenuates signal.")
+    print("If z_23 fires but z_l5 stays 0  -> proj_23_to_l5 attenuates / cascade")
+    print("   latency exceeds T (each GLIF3 layer needs several steps to charge).")
 
 
 if __name__ == "__main__":

@@ -21,7 +21,7 @@ class FeedforwardBlock(nn.Module):
 
     def __init__(self, in_features: int, n_l5: int = 48,
                  hidden_mult: float = 2.0, depth: int = 2,
-                 proj_scale_init: float = 30.0):
+                 proj_scale_init: float = 30.0, v_th: float = 0.5):
         super().__init__()
         h = max(int(round(in_features * hidden_mult)), n_l5)
         dims = [in_features] + [h] * (depth - 1) + [n_l5]
@@ -38,6 +38,7 @@ class FeedforwardBlock(nn.Module):
                 heterogeneous_init=False,
                 # Zero out SFA for plain LIF behavior.
                 asc_amps_init=(0.0, 0.0),
+                v_th=v_th,
             ))
         self.linears = nn.ModuleList(layers)
         self.pops = nn.ModuleList(pops)

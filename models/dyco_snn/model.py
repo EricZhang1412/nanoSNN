@@ -72,6 +72,11 @@ class DyCoSNN(nn.Module):
         learnable_asc = bool(getattr(cfg, "learnable_asc", True))
         heterogeneous_init = bool(getattr(cfg, "heterogeneous_init", True))
         recurrent_enabled = bool(getattr(cfg, "recurrent_enabled", True))
+        # Spike threshold. Default 0.5 (not 1.0): three stacked GLIF3 layers
+        # each impose a multi-step charge-up latency (PSC tau_s + membrane
+        # cf_m=1-decay_m~0.1), so at v_th=1.0 the L4->L23->L5 cascade reaches
+        # L5 only ~1-2 steps short of threshold within T=8 and stays silent.
+        v_th = float(getattr(cfg, "v_th", 0.5))
         alpha_init = float(getattr(cfg, "alpha_init", 0.5))
         self.alpha_learnable = bool(getattr(cfg, "alpha_learnable", True))
 
@@ -87,6 +92,7 @@ class DyCoSNN(nn.Module):
                     n_l5=n_l5,
                     hidden_mult=float(getattr(cfg, "ff_hidden_mult", 2.0)),
                     depth=int(getattr(cfg, "ff_depth", 2)),
+                    v_th=v_th,
                 )
             else:
                 blk = LaminarBlock(
@@ -96,6 +102,7 @@ class DyCoSNN(nn.Module):
                     learnable_asc=learnable_asc,
                     heterogeneous_init=heterogeneous_init,
                     recurrent_enabled=recurrent_enabled,
+                    v_th=v_th,
                 )
             self.blocks.append(blk)
             cur_in = n_l5

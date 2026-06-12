@@ -21,7 +21,7 @@ import torch
 import torch.nn.functional as F
 
 
-def _make_data_config(T=8, image_size=32, n_train=64):
+def _make_data_config(T=16, image_size=32, n_train=64):
     return SimpleNamespace(
         name="synthetic_temporal_order",
         is_event=True,
@@ -34,7 +34,7 @@ def _make_data_config(T=8, image_size=32, n_train=64):
     )
 
 
-def _make_model_config(mode, T=8):
+def _make_model_config(mode, T=16):
     base = dict(
         name="dyco_snn", T=T, num_classes=2, image_size=32, in_channels=2,
         n_blocks=2, stem_dim=64, n_l4=48, n_23e=64, n_23i=16, n_l5=48,
@@ -87,7 +87,7 @@ def _check_grads(model, key_substrings, msg, must_be_nonzero=True):
     return found
 
 
-def _run_mode(mode, batch_size=4, T=8, verbose=False):
+def _run_mode(mode, batch_size=4, T=16, verbose=False):
     print(f"\n========== mode = {mode} ==========")
     data_cfg = _make_data_config(T=T)
     model_cfg = _make_model_config(mode, T=T)
@@ -180,7 +180,7 @@ def _run_mode(mode, batch_size=4, T=8, verbose=False):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--mode", type=str, default="all", choices=["all", "d_only", "c_only", "dc", "ff"])
-    ap.add_argument("--T", type=int, default=8)
+    ap.add_argument("--T", type=int, default=16)
     ap.add_argument("--batch", type=int, default=4)
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()

@@ -60,7 +60,7 @@ class LaminarBlock(nn.Module):
         # inputs since input feature signs are unconstrained; L4 itself is
         # all-excitatory, so its outward projections are positive).
         # Default init magnitude is scaled up so neurons actually reach v_th
-        # at T=8 under default GLIF3 time constants (tau_m=20, tau_s=5).
+        # under the default GLIF3 time constants (tau_m~5-15 hetero, tau_s~2-10).
         self.proj_in_to_l4 = nn.Linear(in_features, n_l4, bias=False)
         self.proj_l4_to_23 = nn.Linear(n_l4, self.n_23, bias=False)
         self.proj_23_to_l5 = nn.Linear(self.n_23, n_l5, bias=False)

@@ -4,7 +4,9 @@ num_classes: 2
 image_size: 32
 in_channels: 2
 is_event: true
-T: 8
+T: 16   # raised from 8: 2 LaminarBlocks = 6 GLIF3 layers; at T=8 the L4->...->L5
+        # cascade can't reach block-1's output in time (c_only went fully silent).
+        # This T is decisive: the model unrolls x.shape[0] steps (model.py:125).
 num_workers: 0
 pin_memory: false
 n_train: 4096

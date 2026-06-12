@@ -1,5 +1,5 @@
 name: dyco_snn
-T: 8
+T: 16                   # raised from 8 to fit the 6-layer (2-block) cascade; must match data config
 num_classes: 2
 image_size: 32
 in_channels: 2
@@ -27,6 +27,7 @@ alpha_init: 0.0
 alpha_learnable: false
 
 # Spike threshold (shared across all D/C/DC/FF arms for a fair ablation).
-# 0.5 (not 1.0): the 3-layer L4->L23->L5 GLIF3 cascade is ~1-2 steps short of
-# v_th=1.0 within T=8 and goes silent at L5; 0.5 gives margin without touching tau_m.
+# 0.5 (not 1.0): at v_th=1.0 each GLIF3 layer needs more steps to cross threshold,
+# leaving the deep 2-block cascade subthreshold; 0.5 speeds per-layer charge-up
+# (paired with T=16) without touching tau_m.
 v_th: 0.5

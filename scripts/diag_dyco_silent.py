@@ -26,14 +26,14 @@ def main():
     from models.build_model import build_model
 
     data_cfg = SimpleNamespace(
-        name="synthetic_temporal_order", is_event=True, T=8, image_size=32,
+        name="synthetic_temporal_order", is_event=True, T=16, image_size=32,
         in_channels=2, num_classes=2, n_train=64, n_val=16, n_test=16,
         blob_size=4, min_gap=1, split_seed=0,
         shuffle_time=False, reverse_time=False, first_last_only=False,
         num_workers=0, pin_memory=False,
     )
     model_cfg = SimpleNamespace(
-        name="dyco_snn", T=8, num_classes=2, image_size=32, in_channels=2,
+        name="dyco_snn", T=16, num_classes=2, image_size=32, in_channels=2,
         n_blocks=2, stem_dim=64, n_l4=48, n_23e=64, n_23i=16, n_l5=48,
         learnable_tau=True, learnable_asc=True, heterogeneous_init=True,
         recurrent_enabled=False, alpha_init=0.0, alpha_learnable=False,
@@ -103,7 +103,7 @@ def main():
             )
 
         z_l5_seq = torch.stack(l5_spikes_all, dim=0)
-        print(f"\n[block 0] total L5 spikes over T=8: {z_l5_seq.sum().item()}  "
+        print(f"\n[block 0] total L5 spikes over T={T}: {z_l5_seq.sum().item()}  "
               f"avg frac: {z_l5_seq.mean().item():.4f}")
 
     v_th = float(blk.pop_l4.v_th)

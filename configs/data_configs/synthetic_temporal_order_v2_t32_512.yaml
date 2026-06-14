@@ -1,0 +1,37 @@
+name: synthetic_temporal_order_v2
+root: ./data/synthetic_temporal_order_v2   # unused; dataset is generated in-memory
+num_classes: 2
+image_size: 32
+in_channels: 2
+is_event: true
+
+# Harder, still cheap pilot: longer sequence and small train set.
+T: 32
+n_train: 512
+n_val: 512
+n_test: 1024
+num_workers: 0
+pin_memory: false
+
+# Target-pair task: classify whether anchored A precedes anchored B.
+grammar: target_pair_order
+blob_size: 4
+time_margin: 2           # excludes boundary cues; first_last_only should be chance
+target_gap_min: 12       # long enough to stress temporal credit assignment
+target_gap_max: 0        # 0 means no upper cap
+target_jitter: 2
+
+# Distractors are channel-balanced and mostly placed between A and B.
+n_distractors: 12
+n_between_distractors: 8
+distractor_min_anchor_distance: 8
+
+# Per-pixel Bernoulli event noise. Keep modest for the first v2 pilot.
+noise_event_rate: 0.001
+noise_value: 1.0
+split_seed: 42
+
+# Temporal-control switches used by scripts/eval_dyco_temporal_controls.py.
+shuffle_time: false
+reverse_time: false
+first_last_only: false

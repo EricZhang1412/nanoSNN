@@ -4,10 +4,16 @@ from torch.utils.data._utils.collate import default_collate
 
 from .event_datasets import EVENT_DATASETS, build_event_dataset
 from .static_datasets import STATIC_DATASETS, build_static_dataset
-from .synthetic_temporal_order import build_synthetic_temporal_order
+from .synthetic_temporal_order import (
+    build_synthetic_temporal_order,
+    build_synthetic_temporal_order_v2,
+)
 
 
-EVENT_DATASET_NAMES = set(EVENT_DATASETS) | {"synthetic_temporal_order"}
+EVENT_DATASET_NAMES = set(EVENT_DATASETS) | {
+    "synthetic_temporal_order",
+    "synthetic_temporal_order_v2",
+}
 STATIC_DATASET_NAMES = set(STATIC_DATASETS)
 
 
@@ -23,6 +29,8 @@ def build_dataset(data_config, split: str):
     name = _dataset_name(data_config)
     if name == "synthetic_temporal_order":
         return build_synthetic_temporal_order(data_config, split)
+    if name == "synthetic_temporal_order_v2":
+        return build_synthetic_temporal_order_v2(data_config, split)
     if is_event_dataset(data_config):
         return build_event_dataset(data_config, split)
     return build_static_dataset(data_config, split)
@@ -46,6 +54,7 @@ def infer_num_classes(data_config, dataset=None) -> int:
         "imagenet": 1000,
         "imagefolder": 1000,
         "synthetic_temporal_order": 2,
+        "synthetic_temporal_order_v2": 2,
     }
     if name not in fallback:
         raise ValueError(f"Cannot infer num_classes for dataset {name}")

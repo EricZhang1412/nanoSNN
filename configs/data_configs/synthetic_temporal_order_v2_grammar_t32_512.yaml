@@ -1,0 +1,35 @@
+name: synthetic_temporal_order_v2
+root: ./data/synthetic_temporal_order_v2   # unused; dataset is generated in-memory
+num_classes: 2
+image_size: 32
+in_channels: 2
+is_event: true
+
+# Multi-event grammar pilot:
+#   class 0: C < A < B  ("A before B after C")
+#   class 1: B < A < C  (reversed foil)
+T: 32
+n_train: 512
+n_val: 512
+n_test: 1024
+num_workers: 0
+pin_memory: false
+
+grammar: three_event_grammar
+blob_size: 4
+time_margin: 2
+target_gap_min: 6
+target_gap_max: 0
+target_jitter: 2
+
+n_distractors: 12
+n_between_distractors: 8
+distractor_min_anchor_distance: 8
+
+noise_event_rate: 0.001
+noise_value: 1.0
+split_seed: 42
+
+shuffle_time: false
+reverse_time: false
+first_last_only: false

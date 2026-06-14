@@ -1,0 +1,33 @@
+name: synthetic_temporal_order_v2
+root: ./data/synthetic_temporal_order_v2   # unused; dataset is generated in-memory
+num_classes: 2
+image_size: 32
+in_channels: 2
+is_event: true
+
+# Longer-horizon sample-efficiency setting.
+T: 64
+n_train: 1024
+n_val: 512
+n_test: 1024
+num_workers: 0
+pin_memory: false
+
+grammar: target_pair_order
+blob_size: 4
+time_margin: 2
+target_gap_min: 24
+target_gap_max: 0
+target_jitter: 2
+
+n_distractors: 24
+n_between_distractors: 16
+distractor_min_anchor_distance: 8
+
+noise_event_rate: 0.0015
+noise_value: 1.0
+split_seed: 42
+
+shuffle_time: false
+reverse_time: false
+first_last_only: false

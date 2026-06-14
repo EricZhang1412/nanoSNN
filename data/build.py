@@ -41,6 +41,8 @@ def infer_num_classes(data_config, dataset=None) -> int:
         "dvs128gesture": 11,
         "imagenet": 1000,
         "imagefolder": 1000,
+        "sequential_mnist": 10,
+        "seqmnist": 10,
         "shd": 20,
     }
     if name not in fallback:

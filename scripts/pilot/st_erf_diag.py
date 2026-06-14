@@ -113,7 +113,13 @@ def compute_st_erf(model, x_sample) -> np.ndarray:
     We treat ‖S[t]‖_F^2 as a scalar and back-prop w.r.t. X[τ] (the patch-embed
     output) — implemented via `torch.autograd.grad`.  Shape is [T, T].
     """
-    model.eval()
+    # LIF needs train() so surrogate gradient is active (eval mode on some
+    # spikingjelly backends short-circuits the autograd path). BN/Dropout
+    # need eval() so running stats are used (batch=1 here).
+    model.train()
+    for m in model.modules():
+        if isinstance(m, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d, nn.Dropout)):
+            m.eval()
     x_sample = x_sample.detach()
     x_sample.requires_grad_(False)
 
@@ -126,15 +132,7 @@ def compute_st_erf(model, x_sample) -> np.ndarray:
         raise RuntimeError(f"feat T ({feat.shape[0]}) != S_seq T ({T})")
 
     feat = feat.detach().requires_grad_(True)
-    # Redo the block stack on `feat` so that S_seq depends on `feat`.
-    # We assume `inner.blocks[-1]` is the gated attention block.
     inner = model.model
-    h = feat
-    for blk in inner.blocks:
-        h = blk(h)
-    # h is unused; we need S_seq from the LAST block, captured via the hook.
-    # But the previous call already populated S_seq — it was from the LAST forward.
-    # We need to redo forward with `feat` as input so grad flows.
     captured = {"S_seq": None}
     last_attn = inner.blocks[-1].attn
     orig = last_attn._run_state_update
@@ -154,7 +152,10 @@ def compute_st_erf(model, x_sample) -> np.ndarray:
         last_attn._run_state_update = orig
 
     S_seq = captured["S_seq"]
+    if not S_seq.requires_grad:
+        raise RuntimeError("S_seq has no grad_fn — surrogate path is detached")
     matrix = np.zeros((T, T), dtype=np.float64)
+    skipped = 0
     for t in range(T):
         scalar = (S_seq[t] ** 2).sum()
         grads = torch.autograd.grad(
@@ -162,11 +163,15 @@ def compute_st_erf(model, x_sample) -> np.ndarray:
             inputs=feat,
             retain_graph=True,
             create_graph=False,
-            allow_unused=False,
-        )[0]  # [T, B, N, C]
-        # Frobenius norm per τ.
+            allow_unused=True,
+        )[0]  # [T, B, N, C] or None
+        if grads is None:
+            skipped += 1
+            continue
         for tau in range(T):
             matrix[t, tau] = float(grads[tau].pow(2).sum().sqrt())
+    if skipped:
+        print(f"  [warn] {skipped}/{T} timesteps had no grad path; left as zeros")
     return matrix
 
 
@@ -239,6 +244,7 @@ def main():
           f"  (n_samples={seen})")
 
     out_dir = Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
     np.save(out_dir / f"st_erf_{args.task}_{args.condition}.npy", M_mean)
     plot_heatmap(
         M_mean,

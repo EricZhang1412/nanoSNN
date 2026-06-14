@@ -152,6 +152,7 @@ class LitVisionSNN(L.LightningModule):
 
     def _shared_step(self, batch, split: str):
         x, y = batch
+        batch_size = int(y.shape[0]) if hasattr(y, "shape") and y.ndim > 0 else 1
         logits_inf = self(x)
         m = self.model
 
@@ -198,15 +199,18 @@ class LitVisionSNN(L.LightningModule):
 
         sync = split != "train"
         on_step = split == "train"
-        self.log(f"{split}/loss", loss, prog_bar=True, on_step=on_step, on_epoch=True, sync_dist=sync)
-        self.log(f"{split}/cls_loss", cls_loss, on_step=on_step, on_epoch=True, sync_dist=sync)
+        log_kwargs = dict(on_step=on_step, on_epoch=True, sync_dist=sync, batch_size=batch_size)
+        self.log(f"{split}/loss", loss, prog_bar=True, **log_kwargs)
+        self.log(f"{split}/cls_loss", cls_loss, **log_kwargs)
         if self.voltage_cost > 0.0:
-            self.log(f"{split}/voltage_loss", voltage_loss, on_step=on_step, on_epoch=True, sync_dist=sync)
+            self.log(f"{split}/voltage_loss", voltage_loss, **log_kwargs)
         if self.rate_cost > 0.0:
-            self.log(f"{split}/rate_loss", rate_loss, on_step=on_step, on_epoch=True, sync_dist=sync)
-        self.log(f"{split}/top1", accs["top1"], prog_bar=True, on_step=False, on_epoch=True, sync_dist=sync)
+            self.log(f"{split}/rate_loss", rate_loss, **log_kwargs)
+        self.log(f"{split}/top1", accs["top1"], prog_bar=True, on_step=False, on_epoch=True,
+                 sync_dist=sync, batch_size=batch_size)
         if num_classes >= 5:
-            self.log(f"{split}/top5", accs["top5"], on_step=False, on_epoch=True, sync_dist=sync)
+            self.log(f"{split}/top5", accs["top5"], on_step=False, on_epoch=True,
+                     sync_dist=sync, batch_size=batch_size)
 
         spike_rate_hz = getattr(self.model, "latest_spike_rate_hz", None)
         if spike_rate_hz is not None:
@@ -217,6 +221,7 @@ class LitVisionSNN(L.LightningModule):
                 on_step=on_step,
                 on_epoch=True,
                 sync_dist=sync,
+                batch_size=batch_size,
             )
 
         # MGA (C3) gate firing-rate diagnostics — logs `<split>/gate_gamma_rate`
@@ -234,13 +239,13 @@ class LitVisionSNN(L.LightningModule):
             self.log(
                 f"{split}/gate_gamma_rate",
                 torch.stack(gamma_rates).float().mean(),
-                on_step=on_step, on_epoch=True, sync_dist=sync,
+                on_step=on_step, on_epoch=True, sync_dist=sync, batch_size=batch_size,
             )
         if beta_rates:
             self.log(
                 f"{split}/gate_beta_rate",
                 torch.stack(beta_rates).float().mean(),
-                on_step=on_step, on_epoch=True, sync_dist=sync,
+                on_step=on_step, on_epoch=True, sync_dist=sync, batch_size=batch_size,
             )
 
         # Free large stashed tensors so they don't pin memory across optimizer step.
@@ -266,8 +271,8 @@ class LitVisionSNN(L.LightningModule):
     def on_train_batch_end(self, outputs, batch, batch_idx):
         if self._step_start_time is not None and self.trainer.is_global_zero:
             elapsed = time.perf_counter() - self._step_start_time
-            x, _ = batch
-            imgs = x.shape[0] if x.ndim == 4 else x.shape[1]
+            _, y = batch
+            imgs = int(y.shape[0]) if hasattr(y, "shape") and y.ndim > 0 else 1
             self.log("train/imgs_per_sec", imgs / elapsed, on_step=True, sync_dist=False)
 
     def configure_optimizers(self):

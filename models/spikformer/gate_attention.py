@@ -340,6 +340,13 @@ class LinearAttentionC3(_GatedLinearAttentionBase):
         if self.k_bits < 0:
             raise ValueError(f"mga_k_bits must be non-negative, got {self.k_bits}")
         self.shift_scale = float(2.0 ** (-self.k_bits))
+        self.gamma_input = str(getattr(model_config, "mga_gamma_input", "membrane")).lower()
+        if self.gamma_input not in {"membrane", "spike", "rate"}:
+            raise ValueError(
+                f"mga_gamma_input must be one of membrane/spike/rate, got {self.gamma_input!r}"
+            )
+        self.use_gamma_gate = bool(getattr(model_config, "mga_use_gamma", True))
+        self.use_beta_gate = bool(getattr(model_config, "mga_use_beta", True))
 
         # Initial tau = exp(log(4.0)) = 4.0 → alpha = 1 - 1/4 = 0.75
         init_log_tau = math.log(4.0)
@@ -416,9 +423,17 @@ class LinearAttentionC3(_GatedLinearAttentionBase):
         alpha_gamma = 1.0 - 1.0 / tau_gamma                      # [H, D]
         alpha_beta = 1.0 - 1.0 / tau_beta                        # [H]
 
-        # γ-gate input: pool pre-threshold K membrane over tokens → [T, B, H, D]
-        u_k_pool = K_membrane.mean(dim=-2)
-        if self.gate_input_norm is not None:
+        # γ-gate input variants for ablation:
+        #   membrane: pooled K pre-threshold membrane (MGA default)
+        #   spike:    pooled K spikes, same [T,B,H,D] shape
+        #   rate:     scalar K spike rate per head, broadcast over D
+        if self.gamma_input == "membrane":
+            u_k_pool = K_membrane.mean(dim=-2)
+        elif self.gamma_input == "spike":
+            u_k_pool = K.float().mean(dim=-2)
+        else:  # rate
+            u_k_pool = K.float().mean(dim=(-2, -1)).unsqueeze(-1).expand(-1, -1, -1, D)
+        if self.gate_input_norm is not None and self.gamma_input != "rate":
             # RWKV-7-style per-head LayerNorm so γ sees a stationary input
             # distribution (mean 0, std 1 per (T, B, H) sample over D).
             u_k_pool = self.gate_input_norm(u_k_pool)
@@ -440,17 +455,24 @@ class LinearAttentionC3(_GatedLinearAttentionBase):
         beta_fire_sum = KV.new_zeros(())
 
         for t in range(T):
-            # γ LIF: pre-threshold update, fire, soft reset
-            u_gamma = alpha_gamma * u_gamma + u_k_pool[t]        # [B, H, D]
-            s_gamma = self._gate_surrogate(u_gamma - V_gamma)    # [B, H, D] in {0, 1}
-            s_gamma_reset = s_gamma.detach() if self._k_detach_reset else s_gamma
-            u_gamma = u_gamma - s_gamma_reset * V_gamma
+            if self.use_gamma_gate:
+                # γ LIF: pre-threshold update, fire, soft reset
+                u_gamma = alpha_gamma * u_gamma + u_k_pool[t]        # [B, H, D]
+                s_gamma = self._gate_surrogate(u_gamma - V_gamma)    # [B, H, D] in {0, 1}
+                s_gamma_reset = s_gamma.detach() if self._k_detach_reset else s_gamma
+                u_gamma = u_gamma - s_gamma_reset * V_gamma
+            else:
+                s_gamma = KV.new_zeros(B, H, D)
 
-            # β LIF: scalar per (B, H)
-            u_beta = alpha_beta * u_beta + r_pool[t]             # [B, H]
-            s_beta = self._gate_surrogate(u_beta - V_beta)       # [B, H] in {0, 1}
-            s_beta_reset = s_beta.detach() if self._k_detach_reset else s_beta
-            u_beta = u_beta - s_beta_reset * V_beta
+            if self.use_beta_gate:
+                # β LIF: scalar per (B, H)
+                u_beta = alpha_beta * u_beta + r_pool[t]             # [B, H]
+                s_beta = self._gate_surrogate(u_beta - V_beta)       # [B, H] in {0, 1}
+                s_beta_reset = s_beta.detach() if self._k_detach_reset else s_beta
+                u_beta = u_beta - s_beta_reset * V_beta
+            else:
+                # No write gate: always write the current KV update.
+                s_beta = KV.new_ones(B, H)
 
             gamma_fire_sum = gamma_fire_sum + s_gamma.detach().float().mean()
             beta_fire_sum = beta_fire_sum + s_beta.detach().float().mean()
@@ -487,8 +509,8 @@ class LinearAttentionC3(_GatedLinearAttentionBase):
     def gate_sparsity(self):
         """Read off cached γ/β firing rates (for logging).  Empty until forward() runs."""
         return {
-            "gamma": float(self._last_s_gamma_rate) if hasattr(self, "_last_s_gamma_rate") else float("nan"),
-            "beta": float(self._last_s_beta_rate) if hasattr(self, "_last_s_beta_rate") else float("nan"),
+            "gamma": float(self.last_gamma_rate.detach().cpu()),
+            "beta": float(self.last_beta_rate.detach().cpu()),
         }
 
 
@@ -517,4 +539,3 @@ def build_gated_attention(attn_type: str, dim: int, num_heads: int, model_config
 
 def list_gated_attention_types() -> list[str]:
     return sorted(_ATTENTION_REGISTRY)
-

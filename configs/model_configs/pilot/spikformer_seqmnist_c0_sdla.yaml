@@ -1,0 +1,16 @@
+name: spikformer_sequence
+T: 784
+num_classes: 10
+input_dim: 1
+embed_dim: 128
+depth: 2
+num_heads: 4
+mlp_ratio: 4.0
+
+attention_type: c0_sdla
+
+neuron_type: lif
+tau: 2.0
+v_threshold: 1.0
+detach_reset: true
+surrogate: atan

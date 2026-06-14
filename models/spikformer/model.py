@@ -493,6 +493,24 @@ class AudioConvStem(nn.Module):
         return rearrange(x, "T B C N -> T B N C").contiguous()
 
 
+class SequenceStem(nn.Module):
+    """Linear stem for long 1-D sequences: [T, B, F] -> [T, B, 1, C]."""
+
+    def __init__(self, input_dim: int, embed_dim: int, model_config):
+        super().__init__()
+        self.token_count = 1
+        self.linear = nn.Linear(input_dim, embed_dim, bias=False)
+        self.bn = nn.BatchNorm1d(embed_dim)
+        self.lif = build_neuron(model_config)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        T, B, F = x.shape
+        h = self.linear(rearrange(x, "T B F -> (T B) F"))
+        h = rearrange(h, "(T B) C -> T B 1 C", T=T, B=B).contiguous()
+        h = _bn1d(h, self.bn)
+        return self.lif(h)
+
+
 @register_model("spikformer_audio")
 class SpikformerAudio(nn.Module):
     """1D Spikformer for SHD (audio).
@@ -524,6 +542,52 @@ class SpikformerAudio(nn.Module):
         if x.ndim == 3:
             x = x.unsqueeze(2)  # [T, B, 1, N]
         x = self.patch_embed(x)          # [T, B, N_tokens, C]
+        for blk in self.blocks:
+            x = blk(x)
+        x = x.mean(dim=2)                # [T, B, C]
+        x = temporal_mean(x)             # [B, C]
+        return self.head(x)
+
+
+@register_model("spikformer_sequence")
+class SpikformerSequence(nn.Module):
+    """Spikformer over long scalar/vector sequences, e.g. Sequential MNIST.
+
+    The dataset side may yield either batch-first `[B, T, F]` or time-first
+    `[T, B, F]`; `T` from the model config disambiguates the layout.
+    """
+
+    def __init__(self, model_config):
+        super().__init__()
+        self.T = int(getattr(model_config, "T", getattr(model_config, "max_len", 784)))
+        embed_dim = int(getattr(model_config, "embed_dim", 256))
+        depth = int(getattr(model_config, "depth", 2))
+        num_heads = int(getattr(model_config, "num_heads", 4))
+        mlp_ratio = float(getattr(model_config, "mlp_ratio", 4.0))
+        num_classes = int(getattr(model_config, "num_classes", 10))
+        input_dim = int(getattr(model_config, "input_dim", 1))
+
+        self.patch_embed = SequenceStem(input_dim, embed_dim, model_config)
+        self.blocks = nn.ModuleList([
+            SpikformerBlock(embed_dim, num_heads, mlp_ratio, model_config)
+            for _ in range(depth)
+        ])
+        self.head = nn.Linear(embed_dim, num_classes)
+
+    def _to_time_first(self, x: torch.Tensor) -> torch.Tensor:
+        if x.ndim == 2:
+            x = x.unsqueeze(-1)
+        if x.ndim != 3:
+            raise ValueError(f"SpikformerSequence expects [B,T,F] or [T,B,F], got {tuple(x.shape)}")
+        if x.shape[0] == self.T:
+            return x
+        if x.shape[1] == self.T:
+            return x.transpose(0, 1).contiguous()
+        raise ValueError(f"Could not infer time dimension T={self.T} from input shape {tuple(x.shape)}")
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self._to_time_first(x).float()
+        x = self.patch_embed(x)          # [T, B, 1, C]
         for blk in self.blocks:
             x = blk(x)
         x = x.mean(dim=2)                # [T, B, C]

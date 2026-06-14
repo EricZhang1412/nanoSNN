@@ -50,10 +50,11 @@ def parse_args():
     p.add_argument("--resume", type=str, default="none")
     p.add_argument("--ckpt_dir", type=str, default=None)
     # Pilot-specific
-    p.add_argument("--task", type=str, required=True,
-                   choices=["dvs128", "shd"])
-    p.add_argument("--condition", type=str, required=True,
-                   choices=["c0_sdla", "c1_lowrank", "c2_oneminusk", "c3_mga"])
+    # Keep these labels free-form so follow-up sweeps can write to
+    # task-specific namespaces such as `shd_T200` or condition labels such as
+    # `c3_mga_gamma_spike` while still using the same training wrapper.
+    p.add_argument("--task", type=str, required=True)
+    p.add_argument("--condition", type=str, required=True)
     p.add_argument("--seed", type=int, required=True)
     p.add_argument("--results_dir", type=str, default="pilot_results")
     return p.parse_args()

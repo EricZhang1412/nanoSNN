@@ -194,10 +194,31 @@ class PilotJSONLogger(Callback):
 
     @staticmethod
     def _fp_mults_estimate(model) -> int | None:
-        """Pick up `estimate_attn_fp_mults_per_step` from the first attention module."""
+        """Estimate recurrence/gate-path FP multiplications per sample and step.
+
+        The pilot compares only the condition-specific attention recurrence/gate
+        path; shared Q/K/V/proj work is intentionally excluded.  We sum all
+        gated-attention blocks and use B=1 so the number is batch-size
+        independent.  Current C0/C3 report 0 by construction, C1/C2 report the
+        FP work in their low-rank/diag recurrence gates.
+        """
+        token_count = PilotJSONLogger._infer_token_count(model)
+        total = 0
+        found = False
         for mod in model.modules():
             est = getattr(mod, "estimate_attn_fp_mults_per_step", None)
             if callable(est):
-                # We can't know K_shape without a forward; report -1 as placeholder.
-                return -1
-        return None
+                h = int(getattr(mod, "num_heads", 1))
+                d = int(getattr(mod, "head_dim", 1))
+                total += int(est((1, h, token_count, d)))
+                found = True
+        return total if found else None
+
+    @staticmethod
+    def _infer_token_count(model) -> int:
+        pe = getattr(model, "patch_embed", None)
+        for attr in ("num_patches", "token_count"):
+            value = getattr(pe, attr, None)
+            if value is not None:
+                return int(value)
+        return int(getattr(model, "token_count", 1))

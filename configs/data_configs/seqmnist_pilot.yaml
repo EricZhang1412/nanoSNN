@@ -1,0 +1,16 @@
+# Long-horizon external benchmark for MGA follow-up.
+name: sequential_mnist
+root: ./data/mnist
+num_classes: 10
+is_event: true
+T: 784
+num_workers: 4
+pin_memory: true
+val_ratio: 0.1
+split_seed: 42
+permute: false
+permute_seed: 0
+normalize_to_01: true
+download: true
+train_drop_last: true
+patch_size: 1

@@ -10,8 +10,30 @@ cd "$REPO_ROOT"
 RESULTS_DIR="${RESULTS_DIR:-pilot_results}"
 N_SAMPLES="${N_SAMPLES:-256}"
 GPU="${GPU:-0}"
+TASKS="${TASKS:-dvs128 shd}"
+CONDITIONS="${CONDITIONS:-c0_sdla c1_lowrank c2_oneminusk c3_mga}"
 
-for task in dvs128 shd; do
+find_ckpt() {
+  local dir="$1"
+  if [[ -f "$dir/last.ckpt" ]]; then
+    echo "$dir/last.ckpt"
+    return 0
+  fi
+  local latest
+  latest=$(ls -t "$dir"/last*.ckpt 2>/dev/null | head -n 1 || true)
+  if [[ -n "$latest" ]]; then
+    echo "$latest"
+    return 0
+  fi
+  latest=$(ls -t "$dir"/*.ckpt 2>/dev/null | head -n 1 || true)
+  if [[ -n "$latest" ]]; then
+    echo "$latest"
+    return 0
+  fi
+  return 1
+}
+
+for task in $TASKS; do
   case "$task" in
     dvs128)
       DATA_CFG="configs/data_configs/dvs128gesture_pilot.yaml"
@@ -19,17 +41,21 @@ for task in dvs128 shd; do
     shd)
       DATA_CFG="configs/data_configs/shd_pilot.yaml"
       ;;
+    *)
+      echo "[skip] unsupported ST-ERF task label: $task" >&2
+      continue
+      ;;
   esac
-  for cond in c0_sdla c1_lowrank c2_oneminusk c3_mga; do
+  for cond in $CONDITIONS; do
     MODEL_CFG="configs/model_configs/pilot/spikformer_${task/dvs128/dvs}_${cond}.yaml"
     [[ "$task" == "shd" ]] && MODEL_CFG="configs/model_configs/pilot/spikformer_shd_${cond}.yaml"
     [[ "$task" == "dvs128" ]] && MODEL_CFG="configs/model_configs/pilot/spikformer_dvs_${cond}.yaml"
-    CKPT="$RESULTS_DIR/checkpoints/$task/$cond/seed42/last.ckpt"
-    if [[ ! -f "$CKPT" ]]; then
-      echo "[skip] no checkpoint at $CKPT"
+    CKPT_DIR="$RESULTS_DIR/checkpoints/$task/$cond/seed42"
+    if ! CKPT=$(find_ckpt "$CKPT_DIR"); then
+      echo "[skip] no checkpoint under $CKPT_DIR"
       continue
     fi
-    echo "[st-erf] $task / $cond"
+    echo "[st-erf] $task / $cond  ckpt=$CKPT"
     CUDA_VISIBLE_DEVICES="$GPU" uv run python -m scripts.pilot.st_erf_diag \
       --ckpt "$CKPT" --task "$task" --condition "$cond" \
       --data_config "$DATA_CFG" --model_config "$MODEL_CFG" \

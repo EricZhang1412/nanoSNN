@@ -68,6 +68,15 @@ Output:
 - `pilot_results/raw.csv`     — per-run JSON merged
 - `pilot_results/summary.md`  — decision table (PASS / PIVOT-eligible / FAIL)
 
+If you are aggregating old JSONs generated before FP-mult accounting was
+implemented, backfill them first:
+
+```bash
+uv run python -m scripts.pilot.backfill_fp_mults --results_dir pilot_results
+uv run python -m scripts.pilot.complexity_table --results_dir pilot_results
+uv run python -m scripts.pilot.aggregate_results --results_dir pilot_results
+```
+
 ## ST-ERF diagnostic (after training)
 
 ```bash
@@ -75,6 +84,27 @@ GPU=0 RESULTS_DIR=pilot_results bash scripts/pilot/run_st_erf_all.sh
 ```
 
 Writes 8 heatmaps to `pilot_results/figs/` and a JSON of E_diag/T_eff stats.
+Limit to DVS only:
+
+```bash
+TASKS=dvs128 GPU=0 RESULTS_DIR=pilot_results bash scripts/pilot/run_st_erf_all.sh
+```
+
+## Follow-up sweeps
+
+The follow-up plan and command cookbook are in
+`docs/PILOT_FOLLOWUP_PLAN.md`.  Main entrypoints:
+
+```bash
+# SHD temporal horizon sweep: T=25/50/100/200, seed 42
+GPUS=0,1,2,3 RESULTS_DIR=pilot_results_t_sweep bash scripts/pilot/run_temporal_sweep.sh
+
+# C3 ablations: membrane-vs-spike, gamma/beta, k_bits, write_scale
+GPUS=0,1,2,3 RESULTS_DIR=pilot_results_c3_ablation bash scripts/pilot/run_c3_ablation.sh
+
+# External long-horizon benchmark: Sequential MNIST
+GPUS=0,1,2,3 RESULTS_DIR=pilot_results_seqmnist bash scripts/pilot/run_seqmnist_long.sh
+```
 
 ## Datasets
 

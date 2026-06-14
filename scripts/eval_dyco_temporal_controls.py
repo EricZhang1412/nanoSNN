@@ -64,7 +64,13 @@ def _set_control_flags(data_cfg, flags: dict[str, bool]):
 
 
 def _model_config_path(mode: str) -> Path:
-    return _repo_root() / "configs" / "model_configs" / f"dyco_snn_{mode}.yaml"
+    path = _repo_root() / "configs" / "model_configs" / f"dyco_snn_{mode}.yaml"
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"Model config not found for mode={mode!r}: {path}. "
+            "Expected configs/model_configs/dyco_snn_<mode>.yaml"
+        )
+    return path
 
 
 def main() -> None:
@@ -76,7 +82,9 @@ def main() -> None:
     parser.add_argument("--ckpt_file", type=str, default=None,
                         help="Optional exact checkpoint filename inside each mode dir, e.g. epoch=003-step=0001000.ckpt")
     parser.add_argument("--modes", nargs="+", default=["d_only", "c_only", "dc", "ff"],
-                        choices=["d_only", "c_only", "dc", "ff"])
+                        help=("Mode names to evaluate. Each mode expects "
+                              "configs/model_configs/dyco_snn_<mode>.yaml and "
+                              "<ckpt_root>/<mode>/ checkpoints."))
     parser.add_argument("--controls", nargs="+", default=["clean", "shuffle", "reverse", "first_last"],
                         choices=sorted(CONTROL_FLAGS))
     parser.add_argument("--out_csv", type=str, default=None)

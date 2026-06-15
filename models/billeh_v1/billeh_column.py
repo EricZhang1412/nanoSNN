@@ -25,9 +25,9 @@ def spike_gauss(v_scaled, sigma, amplitude):
 def sparse_mm_batch(sparse_w, dense_x):
     # sparse_w: [out, in], dense_x: [B, in].
     #
-    # CUDA sparse addmm path (`torch.sparse.mm`) is not implemented for bf16.
+    # Sparse addmm path (`torch.sparse.mm`) is not implemented for bf16 on all accelerators.
     # Implement a mixed-precision-safe sparse mm via chunked gather + index_add.
-    # This keeps gradients for both dense_x and sparse values, and runs on CUDA.
+    # This keeps gradients for both dense_x and sparse values.
     sp = sparse_w.coalesce()
     idx = sp.indices()
     row = idx[0]
@@ -54,6 +54,38 @@ def sparse_mm_batch(sparse_w, dense_x):
             col_i = col[start:end]
             val_i = v[start:end]
             weighted = x[:, col_i] * val_i.unsqueeze(0)  # [B, chunk]
+            out_t.index_add_(0, row_i, weighted.t())
+
+        out = out_t.t()
+    return out.to(out_dtype)
+
+
+def sparse_mm_batch_coo(indices, values, shape, dense_x):
+    # Same math as sparse_mm_batch, but avoids constructing a differentiable
+    # sparse COO tensor. torch-npu lacks sparse_mask used by that backward path.
+    row = indices[0]
+    col = indices[1]
+    val = values
+
+    bsz = dense_x.shape[0]
+    out_features = int(shape[0])
+    nnz = int(val.numel())
+
+    out_dtype = dense_x.dtype
+    compute_dtype = torch.float32
+
+    with torch.amp.autocast(device_type=dense_x.device.type, enabled=False):
+        x = dense_x.to(compute_dtype)
+        v = val.to(compute_dtype)
+        out_t = x.new_zeros((out_features, bsz))
+
+        chunk_nnz = 200_000
+        for start in range(0, nnz, chunk_nnz):
+            end = min(start + chunk_nnz, nnz)
+            row_i = row[start:end]
+            col_i = col[start:end]
+            val_i = v[start:end]
+            weighted = x[:, col_i] * val_i.unsqueeze(0)
             out_t.index_add_(0, row_i, weighted.t())
 
         out = out_t.t()
@@ -224,7 +256,8 @@ class BillehColumnTorch(nn.Module):
         )
 
     def project_input(self, x_t):
-        return sparse_mm_batch(self.input_sparse(), x_t)
+        vals = self.constrained_values(self.input_weight_values, self.in_sign)
+        return sparse_mm_batch_coo(self.in_indices, vals, self.in_shape, x_t)
 
     def step_from_current(self, inputs, state):
         z_buf, v, r, asc_1, asc_2, psc_rise, psc = state
@@ -237,7 +270,8 @@ class BillehColumnTorch(nn.Module):
         psc_rise = psc_rise.reshape(B, N, R)
         psc = psc.reshape(B, N, R)
 
-        i_rec = sparse_mm_batch(self.recurrent_sparse(), z_buf)
+        rec_vals = self.constrained_values(self.recurrent_weight_values, self.rec_sign)
+        i_rec = sparse_mm_batch_coo(self.rec_indices, rec_vals, self.rec_shape, z_buf)
         rec_inputs = (i_rec + inputs).reshape(B, N, R)
 
         new_psc_rise = self.syn_decay[None, :, :] * psc_rise + rec_inputs * self.psc_initial[None, :, :]

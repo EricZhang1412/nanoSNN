@@ -59,8 +59,8 @@ It is designed to make it easy to:
 
 Recommended environment:
 
-- Python `>=3.10,<3.13`
-- CUDA-compatible PyTorch environment if training on GPU
+- Python `>=3.10,<3.12` (Python 3.11 is recommended for CANN 9.0.0)
+- Ascend CANN 9.0.0 with `torch==2.6.0` + `torch-npu==2.6.0`
 - [`uv`](https://github.com/astral-sh/uv) for dependency management
 
 ### Install dependencies
@@ -68,10 +68,43 @@ Recommended environment:
 From the project root:
 
 ```bash
-uv sync
+source /usr/local/Ascend/ascend-toolkit/set_env.sh
+uv sync --python python3.11
 ```
 
 Then run commands through `uv run`.
+
+The project pins CPU PyTorch wheels and uses `torch-npu` for Ascend execution.
+If your CANN install path is different, source that `set_env.sh` before `uv sync`
+and before each training run.
+`triton-ascend` is pinned to the CANN 9.0.0-compatible TestPyPI build used by
+the smoke test.
+
+### Ascend NPU smoke test
+
+Verify the CANN 9.0.0 runtime, `torch_npu`, `triton-ascend`, and one nanoSNN
+forward/backward step:
+
+```bash
+source /usr/local/Ascend/ascend-toolkit/set_env.sh
+uv run python -m scripts.smoke_ascend_npu
+```
+
+For HCCL/DDP, run the distributed smoke through `torchrun`. On a single-NPU
+host this validates one-rank process-group bootstrap; on a multi-NPU host add
+`--require_multi` to make the command fail unless at least two NPUs are visible:
+
+```bash
+uv run torchrun --nproc_per_node=1 --master_port=29513 -m scripts.smoke_hccl_ddp_npu
+uv run torchrun --nproc_per_node=1 --master_port=29514 -m scripts.smoke_lightning_hccl_npu
+
+ASCEND_RT_VISIBLE_DEVICES=0,1 uv run torchrun --nproc_per_node=2 \
+  --master_port=29513 -m scripts.smoke_hccl_ddp_npu --require_multi
+ASCEND_RT_VISIBLE_DEVICES=0,1 uv run torchrun --nproc_per_node=2 \
+  --master_port=29514 -m scripts.smoke_lightning_hccl_npu --require_multi
+```
+
+For the full Ascend adaptation notes, see [docs/ascend_cann9_adaptation.md](docs/ascend_cann9_adaptation.md).
 
 ## Project Structure
 
@@ -92,7 +125,7 @@ nanoSNN/
 
 ## Usage Examples
 
-### 1. Single-GPU training
+### 1. Single-device training
 
 Run with default settings:
 
@@ -107,18 +140,19 @@ uv run bash train.sh spikformer_tiny cifar10
 uv run bash train.sh spiking_resnet18 cifar100
 ```
 
-### 2. Multi-GPU training
+### 2. Multi-device training
 
 Example:
 
 ```bash
-uv run bash multigpu_train.sh spiking_resnet18 imagenet 2 1
+ASCEND_RT_VISIBLE_DEVICES=0,1 uv run bash multigpu_train.sh \
+  default_project_configs default sdt_v1_small cifar10 sdtv1_cifar10 2 1
 ```
 
 Arguments:
 
 ```bash
-bash multigpu_train.sh [model_config] [data_config] [gpus_per_node] [num_nodes]
+bash multigpu_train.sh [project] [train] [model] [data] [optimizer] [devices_per_node] [num_nodes] [port]
 ```
 
 ### 3. Manual training command
@@ -160,6 +194,8 @@ Common fields:
 
 - `batch_size_per_gpu`
 - `random_seed`
+- `trainer.accelerator`
+- `trainer.devices`
 - `trainer.strategy`
 - `trainer.precision`
 - `trainer.max_epochs`
@@ -223,8 +259,8 @@ configs/model_configs/
 
 ## Logging and Checkpoints
 
-- Single-GPU runs use `WandbLogger`
-- Multi-GPU runs use `TensorBoardLogger`
+- Default runs use `TensorBoardLogger`
+- Set `logger: wandb` in the project config, or `NANOSNN_LOGGER=wandb`, to use `WandbLogger`
 - Checkpoints are stored under:
 
 ```text
@@ -305,20 +341,23 @@ implementation at [ifgovh/Training-data-driven-V1-model](https://github.com/ifgo
 
 ### Required data files
 
-Under `model_config.billeh_data_dir` (default `/data2/dataset/LGN_GLIF_Models/preprocessed/GLIF_network`):
+Under `model_config.billeh_data_dir` (default `/mnt/data/datasets/GLIF_network2`):
 
 - `network_dat.pkl`, `v1_node_types.csv`, `v1_nodes.h5` (Billeh GLIF network).
 - `garrett_firing_rates.pkl` (per-cell firing rates from Allen experimental data,
   used as the target rate distribution).
 
-Under `model_config.lgn_data_path` directory (default `/data2/dataset/LGN_GLIF_Models/new_0505/GLIF_network2`):
+Under `model_config.lgn_data_path` directory (default `/mnt/data/datasets/GLIF_network2`):
 
 - `lgn_full_col_cells_3.csv`, `temporal_kernels.pkl`.
 
-Generate `temporal_kernels.pkl` once with:
+Initialize the BMTK submodule and generate `temporal_kernels.pkl` once with:
 
 ```bash
-uv run python scripts/prepare_lgn_kernels.py --lgn_py /path/to/upstream/lgn_model/lgn.py
+git submodule update --init --recursive
+uv run python -m scripts.prepare_lgn_kernels \
+  --lgn_data_path /mnt/data/datasets/GLIF_network2/lgn_full_col_cells_3.csv \
+  --output /mnt/data/datasets/GLIF_network2/temporal_kernels.pkl
 ```
 
 ### Quick start
@@ -344,7 +383,7 @@ uv run python train.py \
 
 `T=600`, `n_neurons=10000`, `chunk_size=60` (10 chunks via gradient
 checkpointing), `batch_size=8`, `accumulate_grad_batches=8` → effective batch 64.
-Peak GPU memory should fit under ~22 GiB. If OOM, reduce `chunk_size` to 30 or
+Peak accelerator memory should fit under ~22 GiB. If OOM, reduce `chunk_size` to 30 or
 `batch_size` to 4 (with `accumulate_grad_batches=16`). If `bf16-mixed` produces
 NaN inside the first 100 steps, switch `precision` to `"32-true"`.
 

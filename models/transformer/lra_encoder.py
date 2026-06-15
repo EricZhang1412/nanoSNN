@@ -143,6 +143,7 @@ class LRATransformerEncoder(nn.Module):
         super().__init__()
         cfg = _cfg(model_config)
         self.cfg = cfg
+        self.expects_temporal_input = False
 
         self.embed = nn.Embedding(cfg.vocab_size, cfg.emb_dim)
         self.cls_token = nn.Parameter(torch.zeros(1, 1, cfg.emb_dim))
@@ -198,9 +199,10 @@ class LRATransformerEncoder(nn.Module):
         return self.pos_embed[:, :n_tokens].to(device=device, dtype=dtype)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if x.ndim != 2 and x.shape[-1] != 1:
-            raise ValueError(f"LRATransformerEncoder expects [B, L, 1], got {tuple(x.shape)}")
-        x = x.squeeze(-1)
+        if not (x.ndim == 2 or (x.ndim == 3 and x.shape[-1] == 1)):
+            raise ValueError(f"LRATransformerEncoder expects [B, L] or [B, L, 1], got {tuple(x.shape)}")
+        if x.ndim == 3:
+            x = x.squeeze(-1)
         B, L = x.shape
         if L != self.cfg.max_len:
             raise ValueError(f"Expected sequence length {self.cfg.max_len}, got {L}")

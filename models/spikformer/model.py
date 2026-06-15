@@ -86,6 +86,10 @@ class SPS(nn.Module):
         return x
 
 
+class SpikeConvPatchEmbed(SPS):
+    """Backward-compatible patch embed name used by SDT v2 configs."""
+
+
 class SpikeSelfAttention(nn.Module):
     """Spike-driven self-attention from Spikformer (Zhou et al., 2022)."""
 

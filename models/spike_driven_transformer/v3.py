@@ -218,6 +218,7 @@ class SpikeDrivenTransformerV3(nn.Module):
 
     def __init__(self, model_config):
         super().__init__()
+        self.expects_temporal_input = False
 
         in_channels = int(_cfg(model_config, "in_channels", 2))
         num_classes = int(_cfg(model_config, "num_classes", 11))

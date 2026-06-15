@@ -2,6 +2,8 @@ batch_size_per_gpu: 8
 random_seed: 42
 
 trainer:
+  accelerator: auto
+  devices: 1
   strategy: auto
   precision: "32-true"
   max_epochs: 820

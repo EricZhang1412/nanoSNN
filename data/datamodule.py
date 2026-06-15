@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 import lightning as L
 from torch.utils.data import DataLoader
 
@@ -18,6 +20,15 @@ class VisionDataModule(L.LightningDataModule):
         self.collate_fn = build_collate_fn(data_config)
         self.is_event_dataset = is_event_dataset(data_config)
 
+    def prepare_data(self):
+        if not bool(getattr(self.data_config, "download", False)):
+            return
+
+        # Lightning runs prepare_data on a single rank per node before setup(),
+        # which prevents multi-process torchvision downloads from racing.
+        for split in ("train", "val", "test"):
+            build_dataset(self.data_config, split)
+
     def setup(self, stage=None):
         if stage in (None, "fit"):
             self.train_dataset = build_dataset(self.data_config, "train")
@@ -31,11 +42,13 @@ class VisionDataModule(L.LightningDataModule):
 
     def _loader_kwargs(self, shuffle: bool, drop_last: bool):
         num_workers = int(getattr(self.data_config, "num_workers", 4))
+        accelerator = os.environ.get("NANOSNN_RESOLVED_ACCELERATOR", "").lower()
+        pin_memory = bool(getattr(self.data_config, "pin_memory", True)) and accelerator == "cuda"
         return dict(
             batch_size=int(self.train_config.batch_size_per_gpu),
             shuffle=shuffle,
             num_workers=num_workers,
-            pin_memory=bool(getattr(self.data_config, "pin_memory", True)),
+            pin_memory=pin_memory,
             persistent_workers=num_workers > 0,
             drop_last=drop_last,
             collate_fn=self.collate_fn,

@@ -3,39 +3,57 @@ name = "nanoSNN"
 version = "0.1.0"
 description = "Vision SNN training framework inspired by nanoLMengine"
 readme = "README.md"
-requires-python = ">=3.10,<3.13"
+requires-python = ">=3.10,<3.12"
 dependencies = [
-    "torch==2.10.0",
-    "torchvision==0.25.0",
-    "torchaudio==2.10.0",
+    # CANN 9.0.0 uses CPU PyTorch plus torch-npu. Keep the torch and
+    # torch-npu major/minor versions exactly aligned.
+    "torch==2.6.0",
+    "torchvision==0.21.0",
+    "torch-npu==2.6.0",
+    "triton-ascend==3.2.0.dev20260515",
     "lightning>=2.0",
     "timm",
     "spikingjelly==0.0.0.0.14",
-    "numpy",
-    "PyYAML",
+    # CANN/torch-npu 2.6.0 is validated with NumPy 1.x.
+    "numpy==1.26.4",
+    "scipy==1.13.1",
+    "attrs==24.2.0",
+    "decorator==5.1.1",
+    "psutil==6.0.0",
+    "PyYAML>=6.0.1",
     "tensorboard",
     "setuptools<81",
     "wandb",
     "einops",
     "pandas",
     "h5py",
-    "simmanager",
-    "bmtk",
-    "tensorflow",
+    "pybind11",
+    "ninja",
+    "cmake",
+    "ml-dtypes",
+    "cloudpickle",
 ]
 
+[tool.uv]
+package = false
+environments = ["sys_platform == 'linux' and platform_machine == 'aarch64'"]
+prerelease = "allow"
+
 [[tool.uv.index]]
-name = "pytorch-cu128"
-url = "https://download.pytorch.org/whl/cu128"
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
 [tool.uv.sources]
-torch = { index = "pytorch-cu128" }
-torchvision = { index = "pytorch-cu128" }
-torchaudio = { index = "pytorch-cu128" }
-simmanager = { path = "3rdparty/SimManager", editable = true }
-bmtk = { path = "3rdparty/bmtk", editable = true }
+torch = { index = "pytorch-cpu" }
+torchvision = { index = "pytorch-cpu" }
+triton-ascend = { index = "testpypi" }
 
 [[tool.uv.index]]
 name = "tuna"
 url = "https://pypi.tuna.tsinghua.edu.cn/simple/"
+
+[[tool.uv.index]]
+name = "testpypi"
+url = "https://test.pypi.org/simple/"
+explicit = true

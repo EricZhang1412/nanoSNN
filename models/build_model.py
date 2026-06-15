@@ -114,13 +114,16 @@ class LitVisionSNN(L.LightningModule):
     # ---------- forward + losses ----------
 
     def _prepare_input(self, x: torch.Tensor) -> torch.Tensor:
+        if getattr(self.model, "expects_temporal_input", True) is False:
+            return x
         if self._is_event_input:
             return x  # already [T, B, C, H, W]
+        if x.ndim == 5:
+            return x
         return expand_static_to_temporal(x, self.T)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if self.model.__class__.__name__ != "SpikeDrivenTransformerV3":
-            x = self._prepare_input(x)
+        x = self._prepare_input(x)
         logits = self.model(x)
         functional.reset_net(self.model)
         return logits
@@ -149,6 +152,14 @@ class LitVisionSNN(L.LightningModule):
         )
         quantile = torch.where(u >= 0, tau * huber / kappa, (1.0 - tau) * huber / kappa)
         return quantile.sum()
+
+    def _log_metric(self, *args, **kwargs) -> None:
+        if getattr(self, "_trainer", None) is not None:
+            self.log(*args, **kwargs)
+
+    def _should_sync_dist(self) -> bool:
+        trainer = getattr(self, "_trainer", None)
+        return bool(trainer is not None and getattr(trainer, "world_size", 1) > 1)
 
     def _shared_step(self, batch, split: str):
         x, y = batch
@@ -196,21 +207,21 @@ class LitVisionSNN(L.LightningModule):
         topk = (1, 5) if num_classes >= 5 else (1,)
         accs = accuracy_at_k(logits_inf, y, topk=topk)
 
-        sync = split != "train"
+        sync = self._should_sync_dist()
         on_step = split == "train"
-        self.log(f"{split}/loss", loss, prog_bar=True, on_step=on_step, on_epoch=True, sync_dist=sync)
-        self.log(f"{split}/cls_loss", cls_loss, on_step=on_step, on_epoch=True, sync_dist=sync)
+        self._log_metric(f"{split}/loss", loss, prog_bar=True, on_step=on_step, on_epoch=True, sync_dist=sync)
+        self._log_metric(f"{split}/cls_loss", cls_loss, on_step=on_step, on_epoch=True, sync_dist=sync)
         if self.voltage_cost > 0.0:
-            self.log(f"{split}/voltage_loss", voltage_loss, on_step=on_step, on_epoch=True, sync_dist=sync)
+            self._log_metric(f"{split}/voltage_loss", voltage_loss, on_step=on_step, on_epoch=True, sync_dist=sync)
         if self.rate_cost > 0.0:
-            self.log(f"{split}/rate_loss", rate_loss, on_step=on_step, on_epoch=True, sync_dist=sync)
-        self.log(f"{split}/top1", accs["top1"], prog_bar=True, on_step=False, on_epoch=True, sync_dist=sync)
+            self._log_metric(f"{split}/rate_loss", rate_loss, on_step=on_step, on_epoch=True, sync_dist=sync)
+        self._log_metric(f"{split}/top1", accs["top1"], prog_bar=True, on_step=False, on_epoch=True, sync_dist=sync)
         if num_classes >= 5:
-            self.log(f"{split}/top5", accs["top5"], on_step=False, on_epoch=True, sync_dist=sync)
+            self._log_metric(f"{split}/top5", accs["top5"], on_step=False, on_epoch=True, sync_dist=sync)
 
         spike_rate_hz = getattr(self.model, "latest_spike_rate_hz", None)
         if spike_rate_hz is not None:
-            self.log(
+            self._log_metric(
                 f"{split}/spike_rate_hz",
                 spike_rate_hz,
                 prog_bar=(split != "train"),

@@ -14,7 +14,7 @@ Checks:
   3) Initial population spike rate is in [0.1, 100] Hz.
   4) Single fwd+bwd produces finite gradients on V1 and pool readout params.
   5) Loss components in expected ranges.
-  6) GPU peak memory under 22 GB at B=8 (only when --batch is passed).
+  6) CUDA/NPU peak memory under 22 GB at B=8 (only when --batch is passed).
 
 Usage:
     python -m scripts.smoke_billeh_v1_lgn                       # B=2 forward only
@@ -34,6 +34,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from utils.load_config import load_config  # noqa: E402
+from utils.ascend import is_npu_available  # noqa: E402
 from models.build_model import build_model  # noqa: E402
 
 
@@ -46,9 +47,15 @@ def main():
     p.add_argument("--batch", type=int, default=2)
     p.add_argument("--memory", action="store_true")
     p.add_argument("--no_cuda", action="store_true")
+    p.add_argument("--device", choices=["auto", "npu", "cuda", "cpu"], default="auto")
     args = p.parse_args()
 
-    device = torch.device("cuda" if (torch.cuda.is_available() and not args.no_cuda) else "cpu")
+    if args.device == "npu" or (args.device == "auto" and is_npu_available()):
+        device = torch.device("npu:0")
+    elif args.device == "cuda" or (args.device == "auto" and torch.cuda.is_available() and not args.no_cuda):
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
     print(f"[smoke] device={device}")
 
     mcfg = load_config(args.model_config)
@@ -141,10 +148,11 @@ def main():
     print(f"    spike_rate_hz logged: {getattr(model, 'latest_spike_rate_hz', None)}")
 
     # ---- 6) Memory check ----
-    if args.memory and device.type == "cuda":
-        print("\n[6] GPU peak memory")
-        torch.cuda.synchronize()
-        peak = torch.cuda.max_memory_allocated() / (1024**3)
+    if args.memory and device.type in {"cuda", "npu"}:
+        print("\n[6] accelerator peak memory")
+        backend = torch.cuda if device.type == "cuda" else torch.npu
+        backend.synchronize()
+        peak = backend.max_memory_allocated() / (1024**3)
         print(f"    peak allocated: {peak:.2f} GiB (target < 22 GiB)")
         if peak > 22.0:
             print("    !! over budget; reduce chunk_size or batch")

@@ -19,6 +19,7 @@ dist/
 .mypy_cache/
 .ruff_cache/
 .ipynb_checkpoints/
+fusion_result.json
 
 # Training outputs
 exp/

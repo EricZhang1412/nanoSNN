@@ -3,6 +3,11 @@ from __future__ import annotations
 import torch
 
 try:
+    import torch_npu  # noqa: F401
+except Exception:  # pragma: no cover - optional Ascend dependency
+    pass
+
+try:
     import triton
     import triton.language as tl
 except ImportError:  # pragma: no cover - optional dependency
@@ -28,10 +33,11 @@ def _check_inputs(spike: torch.Tensor, psp: torch.Tensor) -> None:
 
 
 def _can_use_triton(spike: torch.Tensor, psp: torch.Tensor) -> bool:
+    triton_device = spike.is_cuda or spike.device.type == "npu"
     return (
         triton is not None
-        and spike.is_cuda
-        and psp.is_cuda
+        and triton_device
+        and psp.device.type == spike.device.type
         and spike.dtype == psp.dtype
         and spike.dtype in _TRITON_DTYPES
     )
@@ -44,7 +50,7 @@ def _resolve_backend(spike: torch.Tensor, psp: torch.Tensor, backend: str) -> st
     if backend == "auto":
         return "triton" if _can_use_triton(spike, psp) else "torch"
     if backend == "triton" and not _can_use_triton(spike, psp):
-        raise RuntimeError("backend='triton' requires CUDA tensors with matching dtype and Triton installed")
+        raise RuntimeError("backend='triton' requires CUDA/NPU tensors with matching dtype and Triton installed")
     return backend
 
 
@@ -74,7 +80,7 @@ def _pspgate_triton_forward(spike: torch.Tensor, psp: torch.Tensor, scale: float
         raise RuntimeError("Triton is not installed")
     _check_inputs(spike, psp)
     if not _can_use_triton(spike, psp):
-        raise RuntimeError("Triton pspgate requires CUDA tensors with matching dtype")
+        raise RuntimeError("Triton pspgate requires CUDA/NPU tensors with matching dtype")
     if spike.numel() == 0:
         return spike.clone()
 

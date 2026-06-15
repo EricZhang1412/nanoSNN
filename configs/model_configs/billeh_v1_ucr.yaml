@@ -4,7 +4,7 @@ num_classes: 2
 in_channels: 1
 
 # Billeh V1 backbone setup
-billeh_data_dir: /data2/dataset/LGN_GLIF_Models/preprocessed/GLIF_network
+billeh_data_dir: /mnt/data/datasets/GLIF_network2
 n_neurons: 10000 # max=51798
 full_core: false
 train_v1: true

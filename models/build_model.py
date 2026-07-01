@@ -218,6 +218,42 @@ class LitVisionSNN(L.LightningModule):
                 on_epoch=True,
                 sync_dist=sync,
             )
+        spike_rate_per_timestep = getattr(self.model, "latest_spike_rate_per_timestep", None)
+        if spike_rate_per_timestep is not None:
+            self.log(
+                f"{split}/spike_rate_per_timestep",
+                spike_rate_per_timestep,
+                on_step=on_step,
+                on_epoch=True,
+                sync_dist=sync,
+            )
+        spikes_per_sample = getattr(self.model, "latest_spikes_per_sample", None)
+        if spikes_per_sample is not None:
+            self.log(
+                f"{split}/spikes_per_sample",
+                spikes_per_sample,
+                on_step=on_step,
+                on_epoch=True,
+                sync_dist=sync,
+            )
+        synops_proxy = getattr(self.model, "latest_synops_proxy", None)
+        if synops_proxy is not None:
+            self.log(
+                f"{split}/synops_proxy",
+                synops_proxy,
+                on_step=on_step,
+                on_epoch=True,
+                sync_dist=sync,
+            )
+        hub_spike_rate_hz = getattr(self.model, "latest_hub_spike_rate_hz", None)
+        if hub_spike_rate_hz is not None:
+            self.log(
+                f"{split}/hub_spike_rate_hz",
+                hub_spike_rate_hz,
+                on_step=on_step,
+                on_epoch=True,
+                sync_dist=sync,
+            )
 
         # Free large stashed tensors so they don't pin memory across optimizer step.
         for attr in ("last_spikes", "last_v_norm", "last_logits_chunks"):

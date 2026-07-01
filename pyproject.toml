@@ -19,8 +19,6 @@ dependencies = [
     "einops",
     "pandas",
     "h5py",
-    "simmanager",
-    "bmtk",
     "tensorflow",
 ]
 
@@ -33,8 +31,6 @@ explicit = true
 torch = { index = "pytorch-cu128" }
 torchvision = { index = "pytorch-cu128" }
 torchaudio = { index = "pytorch-cu128" }
-simmanager = { path = "3rdparty/SimManager", editable = true }
-bmtk = { path = "3rdparty/bmtk", editable = true }
 
 [[tool.uv.index]]
 name = "tuna"

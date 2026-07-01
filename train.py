@@ -90,7 +90,13 @@ def train(args):
     if world_size == 1 and is_global_zero_env():
         wandb_dir = os.path.join(default_root_dir, "wandb")
         os.makedirs(wandb_dir, exist_ok=True)
-        logger = WandbLogger(project=exp_name, name=timestamp, save_dir=wandb_dir, offline=False)
+        wandb_mode = os.environ.get("WANDB_MODE", "").strip().lower()
+        logger = WandbLogger(
+            project=exp_name,
+            name=timestamp,
+            save_dir=wandb_dir,
+            offline=wandb_mode == "offline",
+        )
     else:
         logger = TensorBoardLogger(
             save_dir=os.path.join(default_root_dir, "tensorboard"), name=exp_name
@@ -124,6 +130,10 @@ def train(args):
         enable_checkpointing=train_config.trainer.enable_checkpointing,
         accumulate_grad_batches=getattr(train_config.trainer, "accumulate_grad_batches", 1),
         limit_train_batches=getattr(train_config, "limit_train_batches", None),
+        limit_val_batches=getattr(train_config, "limit_val_batches", None),
+        limit_test_batches=getattr(train_config, "limit_test_batches", None),
+        fast_dev_run=getattr(train_config.trainer, "fast_dev_run", False),
+        num_sanity_val_steps=getattr(train_config.trainer, "num_sanity_val_steps", 2),
         logger=logger,
         callbacks=callbacks,
     )
@@ -148,7 +158,8 @@ def train(args):
         rank_zero_info("Training from scratch.")
 
     trainer.fit(lit_model, datamodule=datamodule, ckpt_path=ckpt_path)
-    trainer.test(lit_model, datamodule=datamodule, ckpt_path="best")
+    best_model_path = getattr(trainer.checkpoint_callback, "best_model_path", "")
+    trainer.test(lit_model, datamodule=datamodule, ckpt_path="best" if best_model_path else None)
 
 
 if __name__ == "__main__":

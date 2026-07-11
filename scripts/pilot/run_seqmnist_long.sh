@@ -3,7 +3,7 @@
 #
 # Examples:
 #   GPUS=0,1 RESULTS_DIR=pilot_results_seqmnist bash scripts/pilot/run_seqmnist_long.sh
-#   PERMUTE=1 SEEDS="42 123 2024" DATA_ROOT=/data/maluzhang-folder/datasets/MNIST bash scripts/pilot/run_seqmnist_long.sh
+#   PERMUTE=1 SEEDS="42 123 2024" DATA_ROOT=/path/to/MNIST bash scripts/pilot/run_seqmnist_long.sh
 
 set -euo pipefail
 

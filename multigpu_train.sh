@@ -1,24 +1,35 @@
 #!/bin/bash
-# Multi-GPU / multi-node training script (DDP via torchrun)
-# Usage: bash multigpu_train.sh [model_config] [data_config] [gpus_per_node] [num_nodes]
-# Example: bash multigpu_train.sh spiking_resnet18 imagenet 8 1
-export CUDA_VISIBLE_DEVICES=0,1,2,4,5,6
+# Multi-device / multi-node training script (DDP via torchrun)
+# Usage: bash multigpu_train.sh [project] [train] [model] [data] [optimizer] [devices_per_node] [num_nodes] [port]
+# Example: ASCEND_RT_VISIBLE_DEVICES=0,1 bash multigpu_train.sh default_project_configs default sdt_v1_small cifar10 sdtv1_cifar10 2 1
 
 PROJECT=${1:-default_project_configs}
-TRAINING=${2:-transformer}
-MODEL=${3:-lra_transformer_cifar10}
-DATA=${4:-sequential_mnist}
-OPTIMIZER=${5:-transformer}
+TRAINING=${2:-default}
+MODEL=${3:-sdt_v1_small}
+DATA=${4:-cifar10}
+OPTIMIZER=${5:-sdtv1_cifar10}
 
-GPUS=${6:-6}
+DEVICES=${6:-1}
 NODES=${7:-1}
 PORT=${8:-29502}
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-export GPU_PER_NODE=${GPUS}
+if [ -z "${TORCHRUN_BIN:-}" ]; then
+    if [ -x "${ROOT_DIR}/.venv/bin/torchrun" ]; then
+        TORCHRUN_BIN="${ROOT_DIR}/.venv/bin/torchrun"
+    else
+        TORCHRUN_BIN=torchrun
+    fi
+fi
+
+export NANOSNN_ACCELERATOR=${NANOSNN_ACCELERATOR:-auto}
+export DEVICES_PER_NODE=${DEVICES}
+export NPU_PER_NODE=${DEVICES}
+export GPU_PER_NODE=${DEVICES}
 export N_NODE=${NODES}
 
-torchrun \
-    --nproc_per_node=${GPUS} \
+"${TORCHRUN_BIN}" \
+    --nproc_per_node=${DEVICES} \
     --nnodes=${NODES} \
     --master_port=${PORT} \
     train.py \

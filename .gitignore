@@ -27,6 +27,22 @@ wandb/
 tensorboard/
 checkpoints/
 *.ckpt
+/datasets/
+
+# Pilot runtime outputs (curated JSON/CSV/Markdown may be committed explicitly)
+/pilot_results*/generated_configs/
+/pilot_results*/logs/
+/pilot_results*/checkpoints/
+/pilot_results_t_sweep_T200_b64/
+
+# Ascend/Triton generated artifacts
+/kernel_meta/
+/export_only_prof_dir/
+/fusion_result.json
+
+# Migration staging files
+/MIGRATION_README.md
+/PACKAGE_MANIFEST.txt
 
 # OS / editor
 .DS_Store

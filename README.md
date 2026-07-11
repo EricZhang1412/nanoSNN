@@ -9,8 +9,25 @@
 nanoSNN is a general vision SNN training framework inspired by `nanoLMengine`.
 It provides a config-driven training workflow for representative spiking vision models, with a unified `train.py` entrypoint, Lightning-based training loop, checkpoint resume support, and reusable dataset/model building blocks.
 
+## MGA Research Track
+
+This branch contains Membrane-Gated Attention (MGA), a recurrent spike-driven
+attention module that uses the pre-threshold K membrane to control temporal KV
+memory. The implementation, four controlled attention conditions, SHD/DVS
+recipes, long-horizon sweeps, and Ascend/Triton kernels are available. Existing
+pilot metrics are exploratory; confirmatory multi-seed and ablation experiments
+remain outstanding.
+
+- Current method: [`docs/MGA_V2_SPEC.md`](docs/MGA_V2_SPEC.md)
+- Historical preregistration: [`docs/PILOT_GATE1.md`](docs/PILOT_GATE1.md)
+- Follow-up status and commands: [`docs/PILOT_FOLLOWUP_PLAN.md`](docs/PILOT_FOLLOWUP_PLAN.md)
+- Curated exploratory results: [`pilot_results_t_sweep/README.md`](pilot_results_t_sweep/README.md)
+- Ascend kernel smoke results: [`docs/KERNEL_SMOKE_RESULTS.md`](docs/KERNEL_SMOKE_RESULTS.md)
+
 ## Recent News
 
+- **2026-07-11**: Freeze MGA-v2, correct train/validation/test isolation and
+  single-seed reporting, and add Ascend/Triton optimization utilities.
 - 🎉🎉🎉**2026-05-04**: Implement Billeh-v1 visual cortex-inspired model. 
 > Ref: 
 > - 📑[A data-based large-scale model for primary visual cortex enables brain-like robust and versatile visual processing](https://www.science.org/doi/10.1126/sciadv.abq7592); 
@@ -22,6 +39,8 @@ It provides a config-driven training workflow for representative spiking vision 
 This project currently supports:
 
 - **Spikformer**
+- **Membrane-Gated Attention**: C0/C1/C2/C3 controlled conditions
+- **Spikformer Audio / Sequence**: SHD and sequential-MNIST frontends
 - **Spike-Driven Transformer** v1 / v2 / v3
 - **Spiking CNNs**: VGG / ResNet / MS-ResNet
 - **Static-image datasets**: CIFAR10 / CIFAR100 / ImageNet
@@ -59,8 +78,8 @@ It is designed to make it easy to:
 
 Recommended environment:
 
-- Python `>=3.10,<3.13`
-- CUDA-compatible PyTorch environment if training on GPU
+- Python `>=3.10,<3.12` (Python 3.11 is recommended for CANN 9.0.0)
+- Ascend CANN 9.0.0 with `torch==2.6.0` + `torch-npu==2.6.0`
 - [`uv`](https://github.com/astral-sh/uv) for dependency management
 
 ### Install dependencies
@@ -68,10 +87,30 @@ Recommended environment:
 From the project root:
 
 ```bash
-uv sync
+source /usr/local/Ascend/ascend-toolkit/set_env.sh
+uv sync --python python3.11
 ```
 
 Then run commands through `uv run`.
+
+The project pins CPU PyTorch wheels and uses `torch-npu` for Ascend execution.
+If your CANN install path is different, source that `set_env.sh` before `uv sync`
+and before each training run.
+`triton-ascend` is pinned to the CANN 9.0.0-compatible TestPyPI build used by
+the smoke test.
+
+### Ascend NPU smoke test
+
+Verify the CANN 9.0.0 runtime, `torch_npu`, `triton-ascend`, and one nanoSNN
+forward/backward step:
+
+```bash
+source /usr/local/Ascend/ascend-toolkit/set_env.sh
+uv run python -m scripts.smoke_ascend_npu
+```
+
+For HCCL/DDP smoke tests and the full Ascend adaptation notes, see
+[docs/ascend_cann9_adaptation.md](docs/ascend_cann9_adaptation.md).
 
 ## Project Structure
 
@@ -193,7 +232,7 @@ Common fields:
 - `beta1`, `beta2`
 - `weight_decay`
 - `scheduler`
-- `warmup_steps`
+- `warmup_epochs`
 - `min_lr_ratio`
 
 ## Available Model Configs
@@ -207,6 +246,7 @@ Currently included:
 - `spiking_vgg11`
 - `spiking_resnet18`
 - `ms_resnet18`
+- `pilot/spikformer_{dvs,shd,seqmnist}_{c0,c1,c2,c3}`
 
 These are located in:
 
@@ -305,13 +345,13 @@ implementation at [ifgovh/Training-data-driven-V1-model](https://github.com/ifgo
 
 ### Required data files
 
-Under `model_config.billeh_data_dir` (default `/data2/dataset/LGN_GLIF_Models/preprocessed/GLIF_network`):
+Under `model_config.billeh_data_dir` (default `./datasets/billeh/preprocessed/GLIF_network`):
 
 - `network_dat.pkl`, `v1_node_types.csv`, `v1_nodes.h5` (Billeh GLIF network).
 - `garrett_firing_rates.pkl` (per-cell firing rates from Allen experimental data,
   used as the target rate distribution).
 
-Under `model_config.lgn_data_path` directory (default `/data2/dataset/LGN_GLIF_Models/new_0505/GLIF_network2`):
+Under `model_config.lgn_data_path` directory (default `./datasets/billeh/GLIF_network2`):
 
 - `lgn_full_col_cells_3.csv`, `temporal_kernels.pkl`.
 

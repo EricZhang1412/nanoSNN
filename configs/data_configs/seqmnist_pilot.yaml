@@ -1,6 +1,6 @@
 # Long-horizon external benchmark for MGA follow-up.
 name: sequential_mnist
-root: ./data/mnist
+root: ./datasets/mnist
 num_classes: 10
 is_event: true
 T: 784

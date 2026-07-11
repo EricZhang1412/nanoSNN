@@ -117,15 +117,17 @@ def build_eval_transform(data_config):
     ])
 
 
-def build_event_transform(data_config):
+def build_event_transform(data_config, split: str):
+    if split not in {"train", "val", "test"}:
+        raise ValueError(f"Unsupported event-data split: {split}")
+
     scale = float(getattr(data_config, "event_scale", 1.0))
     name = _dataset_name(data_config)
 
     # SHD-specific: 1D frames [T, 1, 700], optional random temporal shift in train
     if name == "shd":
         time_shift = int(getattr(data_config, "time_shift", 5))
-        is_event = bool(getattr(data_config, "is_event", True))  # use to gate aug if needed
-        do_shift = bool(getattr(data_config, "augment_time_shift", True))
+        do_shift = split == "train" and bool(getattr(data_config, "augment_time_shift", True))
 
         def _shd_transform(frames):
             if isinstance(frames, np.ndarray):

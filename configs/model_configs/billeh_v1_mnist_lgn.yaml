@@ -10,7 +10,7 @@ response_window_len: 50
 down_sample: 50
 
 # Billeh V1 backbone setup
-billeh_data_dir: /data2/dataset/LGN_GLIF_Models/new_0505/GLIF_network2
+billeh_data_dir: ./datasets/billeh/GLIF_network2
 n_neurons: 3000          # max=51798; need ≥~3000 L5e for 15 readout pools at neurons_per_output=30
 neurons_per_output: 30   # paper uses ~30 L5e neurons per readout pool
 localized_readout: false  # fallback-safe on reduced core volumes
@@ -23,8 +23,8 @@ auto_n_input_from_in_channels: false
 # LGN front-end (PyTorch).
 use_lgn: true
 auto_n_input_from_lgn: true
-lgn_data_path: /data2/dataset/LGN_GLIF_Models/new_0505/GLIF_network2/lgn_full_col_cells_3.csv
-lgn_temporal_kernels_path: /data2/dataset/LGN_GLIF_Models/new_0505/GLIF_network2/temporal_kernels.pkl
+lgn_data_path: ./datasets/billeh/GLIF_network2/lgn_full_col_cells_3.csv
+lgn_temporal_kernels_path: ./datasets/billeh/GLIF_network2/temporal_kernels.pkl
 
 # LGN coordinates expect a 240x120 retinotopic field.
 lgn_input_height: 120

@@ -18,7 +18,8 @@ JSON file with the metrics defined in `docs/PILOT_GATE1.md` §4:
       "spike_rate_attn_avg": 0.27,
       "fp_mults_attention_path_per_step": 0,
       "gate_sparsity_gamma": 0.31,
-      "gate_sparsity_beta": 0.42
+      "gate_sparsity_beta": 0.42,
+      "test_top1": 96.1
     }
 """
 
@@ -63,6 +64,7 @@ class PilotJSONLogger(Callback):
         self._epoch_gate_gamma_rate: list[float] = []
         self._epoch_gate_beta_rate: list[float] = []
         self._start_t: float | None = None
+        self._payload: dict[str, Any] | None = None
 
     # ------------------------------------------------------------------
 
@@ -146,10 +148,30 @@ class PilotJSONLogger(Callback):
                     sum(self._epoch_gate_beta_rate) / max(1, len(self._epoch_gate_beta_rate)),
                     4,
                 ) if self._epoch_gate_beta_rate else None,
+                "test_top1": None,
             }
 
+        self._payload = payload
+        self._write_payload(trainer)
+
+    @rank_zero_only
+    def on_test_epoch_end(self, trainer, pl_module) -> None:
+        if self._payload is None:
+            return
+        metric = trainer.callback_metrics.get("test/top1")
+        if metric is None:
+            return
+        value = float(metric.detach().cpu().item() if torch.is_tensor(metric) else metric)
+        if value <= 1.5:
+            value *= 100.0
+        self._payload["test_top1"] = round(value, 4)
+        self._write_payload(trainer)
+
+    def _write_payload(self, trainer) -> None:
+        if self._payload is None:
+            return
         out_path = self.out_dir / f"seed{self.seed}.json"
-        out_path.write_text(json.dumps(payload, indent=2))
+        out_path.write_text(json.dumps(self._payload, indent=2))
         try:
             trainer.print(f"[PilotJSONLogger] wrote {out_path}")
         except Exception:
@@ -174,6 +196,7 @@ class PilotJSONLogger(Callback):
             "fp_mults_attention_path_per_step": None,
             "gate_sparsity_gamma": None,
             "gate_sparsity_beta": None,
+            "test_top1": None,
             "note": "no val/top1 metric observed",
         }
 
@@ -184,6 +207,7 @@ class PilotJSONLogger(Callback):
             "gate_up", "gate_down",              # C1
             "log_tau_gamma", "log_tau_beta",     # C3
             "V_gamma", "V_beta_raw",             # C3 (V_gamma unconstrained, V_beta via softplus)
+            "gate_input_norm",                    # C3 per-head LayerNorm
             "log_write_scale",                   # C3 Tier-2 write scale
         )
         total = 0

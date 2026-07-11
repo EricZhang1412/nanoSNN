@@ -1,0 +1,17 @@
+{
+  "task": "shd_T25",
+  "condition": "c3_mga",
+  "seed": 42,
+  "top1_best": 85.4682,
+  "top1_last10_mean": 84.788,
+  "top1_last10_std": 0.2695,
+  "best_epoch": 90,
+  "epochs_to_90pct": -1,
+  "total_train_time_h": 1.885,
+  "params_total_M": 1.922,
+  "params_gate_M": 0.001304,
+  "spike_rate_attn_avg": null,
+  "fp_mults_attention_path_per_step": 0,
+  "gate_sparsity_gamma": 0.5959,
+  "gate_sparsity_beta": 0.751
+}

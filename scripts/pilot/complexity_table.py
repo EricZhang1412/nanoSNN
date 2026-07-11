@@ -55,8 +55,11 @@ def _counts(cfg: dict[str, Any], label: str) -> dict[str, Any]:
     elif cond == "c3_mga":
         fp_block_step = 0
         use_write_scale = bool(cfg.get("mga_use_write_scale", True))
-        # log_tau_gamma + V_gamma + log_tau_beta + V_beta_raw (+ write_scale)
+        use_gate_norm = bool(cfg.get("mga_gate_input_norm", True))
+        # Gate LIF params, optional write scale, and optional LayerNorm weight/bias.
         gate_params_block = 2 * h * d + 2 * h + (h if use_write_scale else 0)
+        if use_gate_norm:
+            gate_params_block += 2 * d
     else:
         fp_block_step = 0
         gate_params_block = 0

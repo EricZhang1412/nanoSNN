@@ -1,5 +1,11 @@
 # Gate-1 Pilot Spec (canonical copy)
 
+> Historical preregistration: this file records the original v1 protocol and is
+> intentionally not rewritten to match the evolved implementation. The legacy
+> runs used the official test split for validation and applied stochastic SHD
+> time shift during evaluation, so their metrics are exploratory. Current runs
+> must follow `docs/MGA_V2_SPEC.md`.
+
 This file is a verbatim copy of the user's pilot plan, saved into the repo
 for archival reference.  See `scripts/pilot/README.md` for the implementation
 overview.

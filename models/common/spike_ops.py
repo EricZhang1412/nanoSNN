@@ -41,6 +41,7 @@ def build_neuron(model_config, step_mode: str = "m", v_threshold: float | None =
     if v_threshold is None:
         v_threshold = float(getattr(model_config, "v_threshold", 1.0))
     detach_reset = bool(getattr(model_config, "detach_reset", True))
+    backend = str(getattr(model_config, "neuron_backend", "torch")).lower()
     if output_mode is None:
         output_mode = str(getattr(model_config, "neuron_output", "spike")).lower()
     else:
@@ -66,9 +67,12 @@ def build_neuron(model_config, step_mode: str = "m", v_threshold: float | None =
         surrogate_function=surr_fn,
         detach_reset=detach_reset,
         step_mode=step_mode,
+        backend=backend,
     )
-    if neuron_type in {"lif", "plif"}:
+    if neuron_type == "lif":
         kwargs["tau"] = tau
+    elif neuron_type == "plif":
+        kwargs["init_tau"] = tau
 
     if output_mode == "psp":
         if step_mode == "m":

@@ -13,4 +13,4 @@ class EpochTimerCallback(Callback):
         if self._epoch_start is None:
             return
         elapsed = time.perf_counter() - self._epoch_start
-        pl_module.log("train/epoch_seconds", elapsed, on_epoch=True, sync_dist=False)
+        pl_module.log("train/epoch_seconds", elapsed, on_epoch=True, sync_dist=trainer.world_size > 1)

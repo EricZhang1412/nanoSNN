@@ -1,5 +1,5 @@
 name: billeh_mnist_lgn
-root: /data2/users/zhangjy/Training-data-driven-V1-model/data/mnist
+root: ./datasets/mnist
 num_classes: 10
 image_size: 28
 in_channels: 1

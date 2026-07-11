@@ -33,8 +33,8 @@ def sort_indices(indices, weights):
     return indices[sorted_ind], weights[sorted_ind]
 
 
-def load_network(path='/data/allen/v1_model/GLIF_network/network_dat.pkl',
-                 h5_path='/data/allen/v1_model/GLIF_network/network/v1_nodes.h5',
+def load_network(path='./datasets/billeh/GLIF_network/network_dat.pkl',
+                 h5_path='./datasets/billeh/GLIF_network/network/v1_nodes.h5',
                  data_dir = '.',
                  core_only=True, n_neurons=None, seed=3000, connected_selection=False,
                  use_rand_ini_w=False, use_dale_law=True, use_rand_connectivity=False,
@@ -209,7 +209,7 @@ def load_network(path='/data/allen/v1_model/GLIF_network/network_dat.pkl',
     return network
 
 
-def load_input(path='/data/allen/v1_model/GLIF_network/input_dat.pkl',
+def load_input(path='./datasets/billeh/GLIF_network/input_dat.pkl',
                start=0,
                duration=3000,
                dt=1,
@@ -657,16 +657,7 @@ def main(base_path):
 
 if __name__ == '__main__':
     import argparse
-    import socket
-    hostname = socket.gethostname()
-    if hostname.count('scherr-pc') > 0:
-        _data_dir = '/data/allen/v1_model/GLIF_network'
-    elif hostname.count('nvcluster'):
-        _data_dir = os.path.expanduser('~/allen/mv1_network/GLIF_network')
-    elif hostname.count('pCluster') > 0:
-        _data_dir = '/home/guozhang/tf_billeh_column/GLIF_network'
-    else:
-        _data_dir = ''
+    _data_dir = os.environ.get('BILLEH_DATA_DIR', './datasets/billeh/GLIF_network')
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--data_dir', type=str, default=_data_dir)

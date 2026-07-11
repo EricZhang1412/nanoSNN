@@ -5,8 +5,7 @@ Verifies:
   2. Output has the expected shape and contains no NaN/Inf.
   3. State-dict diff across conditions is confined to gate parameters
      (i.e. only attention-module keys differ).
-  4. For C2/C3, reports the FP-mult count on the attention path
-     (should be 0 by hardware accounting).
+  4. Checks condition-specific recurrence/state-update FP-mult accounting.
   5. Confirms that C3 uses pre-threshold K membrane (not K spikes) by
      toggling K spike sparsity and observing γ-gate behavior.
 
@@ -178,11 +177,17 @@ def test_fp_mults_on_attention_path():
     C, H, B, N = 32, 4, 2, 16
     cfg = _model_config()
     K_shape = (B, H, N, C // H)
+    counts = {}
     for t in list_gated_attention_types():
         mod = build_gated_attention(t, C, H, cfg)
         mults = mod.estimate_attn_fp_mults_per_step(K_shape)
+        counts[t] = mults
         print(f"  {t:18s}  FP-mults/step on attention path = {mults}")
-    print("  (C0/C2/C3 should be 0; C1 has low-rank gate FP-mults).")
+    assert counts["c0_sdla"] == 0
+    assert counts["c1_lowrank"] > 0
+    assert counts["c2_oneminusk"] > 0
+    assert counts["c3_mga"] == 0
+    print("  (C3 counts the fixed-point state-update mapping; gate-LIF work is excluded.)")
 
 
 def test_c3_uses_membrane_not_spikes():

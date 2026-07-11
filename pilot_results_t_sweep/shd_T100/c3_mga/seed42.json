@@ -1,0 +1,17 @@
+{
+  "task": "shd_T100",
+  "condition": "c3_mga",
+  "seed": 42,
+  "top1_best": 87.8092,
+  "top1_last10_mean": 86.3825,
+  "top1_last10_std": 0.4125,
+  "best_epoch": 55,
+  "epochs_to_90pct": -1,
+  "total_train_time_h": 11.27,
+  "params_total_M": 1.922,
+  "params_gate_M": 0.001304,
+  "spike_rate_attn_avg": null,
+  "fp_mults_attention_path_per_step": 0,
+  "gate_sparsity_gamma": 0.5382,
+  "gate_sparsity_beta": 0.6273
+}

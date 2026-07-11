@@ -18,6 +18,8 @@ import math
 from pathlib import Path
 from typing import Any
 
+from scipy.stats import t as student_t
+
 DEFAULT_TASKS = ["dvs128", "shd"]
 DEFAULT_CONDITIONS = ["c0_sdla", "c1_lowrank", "c2_oneminusk", "c3_mga"]
 DEFAULT_SEEDS = [42, 123, 2024]
@@ -38,9 +40,10 @@ def _ci95(values: list[float]) -> tuple[float, float]:
         return float("nan"), float("nan")
     mean = sum(values) / len(values)
     if len(values) < 2:
-        return mean, 0.0
+        return mean, float("nan")
     sd = math.sqrt(sum((v - mean) ** 2 for v in values) / (len(values) - 1))
-    ci = 1.96 * sd / math.sqrt(len(values))
+    critical = float(student_t.ppf(0.975, df=len(values) - 1))
+    ci = critical * sd / math.sqrt(len(values))
     return mean, ci
 
 
@@ -49,7 +52,10 @@ def aggregate(
     tasks: list[str] | None = None,
     conditions: list[str] | None = None,
     seeds: list[int] | None = None,
+    min_seeds: int = 3,
 ) -> None:
+    if min_seeds < 2:
+        raise ValueError(f"min_seeds must be at least 2 to estimate a confidence interval, got {min_seeds}")
     tasks = tasks or DEFAULT_TASKS
     conditions = conditions or DEFAULT_CONDITIONS
     seeds = seeds or DEFAULT_SEEDS
@@ -83,8 +89,8 @@ def aggregate(
     lines = ["# Gate-1 Pilot results\n\n## Decision table\n"]
     for task in tasks:
         lines.append(f"### {task}\n")
-        lines.append("| Condition | top1 mean ± 95%CI | best_epoch (mean) | params_M | gate_params_M | FP-mults/step | T_eff | E_diag | γ-rate | β-rate |")
-        lines.append("|---|---|---|---|---|---|---|---|---|---|")
+        lines.append("| Condition | top1 mean ± 95%CI | best_epoch (mean) | params_M | gate_params_M | FP-mults/step | T_eff | E_diag | E_past | mean past lag | γ-rate | β-rate |")
+        lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|")
         per_cond: dict[str, list[float]] = {c: [] for c in conditions}
         per_cond_other: dict[str, dict[str, list[float]]] = {c: {} for c in conditions}
         for cond in conditions:
@@ -105,10 +111,12 @@ def aggregate(
             gr = _mean(per_cond_other[cond].get("gate_sparsity_gamma", []))
             br = _mean(per_cond_other[cond].get("gate_sparsity_beta", []))
             st = st_erf.get(f"{task}/{cond}", {})
+            estimate = _fmt_estimate(per_cond[cond])
             lines.append(
-                f"| {cond} | {mean:.2f} ± {ci:.2f} | "
+                f"| {cond} | {estimate} | "
                 f"{_fmt(be)} | {_fmt(pm)} | {_fmt(gp)} | {_fmt(fp)} | "
                 f"{_fmt(st.get('T_eff'))} | {_fmt(st.get('E_diag'))} | "
+                f"{_fmt(st.get('E_past'))} | {_fmt(st.get('mean_past_lag'))} | "
                 f"{_fmt(gr)} | {_fmt(br)} |"
             )
 
@@ -117,8 +125,11 @@ def aggregate(
         a_c2 = _ci95(per_cond.get("c2_oneminusk", []))[0]
         a_c3, ci_c3 = _ci95(per_cond.get("c3_mga", []))
         a_triv = max(a_c1, a_c2) if not (math.isnan(a_c1) and math.isnan(a_c2)) else float("nan")
-        verdict = _gate_decision(a_c3, ci_c3, a_triv, per_cond, st_erf, task)
-        lines.append(f"\n**A_triv = {a_triv:.2f}** ; **A_C3 − A_triv = {a_c3 - a_triv:+.2f}** ; "
+        verdict = _gate_decision(
+            a_c3, ci_c3, a_triv, per_cond, st_erf, task, min_seeds=min_seeds
+        )
+        lines.append(f"\n**A_triv = {_fmt_number(a_triv)}** ; "
+                     f"**A_C3 − A_triv = {_fmt_signed(a_c3 - a_triv)}** ; "
                      f"**verdict on {task}: {verdict}**\n")
 
     md_path = results_dir / "summary.md"
@@ -126,10 +137,20 @@ def aggregate(
     print(f"wrote {md_path}")
 
 
-def _gate_decision(a_c3, ci_c3, a_triv, per_cond, st_erf, task) -> str:
+def _gate_decision(a_c3, ci_c3, a_triv, per_cond, st_erf, task, min_seeds: int = 3) -> str:
     """Per pilot §6: PASS / PIVOT-eligible / FAIL."""
+    required_conditions = ("c1_lowrank", "c2_oneminusk", "c3_mga")
+    missing = [
+        f"{cond}={len(per_cond.get(cond, []))}/{min_seeds}"
+        for cond in required_conditions
+        if len(per_cond.get(cond, [])) < min_seeds
+    ]
+    if missing:
+        return f"INSUFFICIENT DATA ({', '.join(missing)})"
     if math.isnan(a_c3) or math.isnan(a_triv):
         return "INSUFFICIENT DATA"
+    if math.isnan(ci_c3):
+        return "INSUFFICIENT DATA (95% CI unavailable)"
     delta = a_c3 - a_triv
     # Non-overlap test (rough): require lower-bound of C3 CI ≥ upper-bound of best trivial.
     best_triv_name = "c1_lowrank" if (_ci95(per_cond.get("c1_lowrank", []))[0] or 0) > (_ci95(per_cond.get("c2_oneminusk", []))[0] or 0) else "c2_oneminusk"
@@ -182,6 +203,23 @@ def _fmt(v):
     return str(v)
 
 
+def _fmt_estimate(values: list[float]) -> str:
+    mean, ci = _ci95(values)
+    if math.isnan(mean):
+        return "—"
+    if math.isnan(ci):
+        return f"{mean:.2f} (n={len(values)}; CI unavailable)"
+    return f"{mean:.2f} ± {ci:.2f} (n={len(values)})"
+
+
+def _fmt_number(value: float) -> str:
+    return "—" if math.isnan(value) else f"{value:.2f}"
+
+
+def _fmt_signed(value: float) -> str:
+    return "—" if math.isnan(value) else f"{value:+.2f}"
+
+
 def _split_arg(value: str) -> list[str]:
     return [x for x in value.replace(",", " ").split() if x]
 
@@ -195,10 +233,13 @@ if __name__ == "__main__":
                    help="Space/comma separated condition labels to aggregate")
     p.add_argument("--seeds", type=str, default=" ".join(str(s) for s in DEFAULT_SEEDS),
                    help="Space/comma separated seeds")
+    p.add_argument("--min_seeds", type=int, default=3,
+                   help="Minimum runs per C1/C2/C3 condition required for a verdict")
     args = p.parse_args()
     aggregate(
         Path(args.results_dir).resolve(),
         tasks=_split_arg(args.tasks),
         conditions=_split_arg(args.conditions),
         seeds=[int(x) for x in _split_arg(args.seeds)],
+        min_seeds=args.min_seeds,
     )

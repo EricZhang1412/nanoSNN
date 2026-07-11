@@ -1,0 +1,17 @@
+{
+  "task": "shd_T25",
+  "condition": "c2_oneminusk",
+  "seed": 42,
+  "top1_best": 85.424,
+  "top1_last10_mean": 84.3772,
+  "top1_last10_std": 0.5185,
+  "best_epoch": 82,
+  "epochs_to_90pct": -1,
+  "total_train_time_h": 2.444,
+  "params_total_M": 1.9207,
+  "params_gate_M": 0.0,
+  "spike_rate_attn_avg": null,
+  "fp_mults_attention_path_per_step": 32768,
+  "gate_sparsity_gamma": null,
+  "gate_sparsity_beta": null
+}

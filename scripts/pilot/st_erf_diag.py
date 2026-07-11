@@ -11,7 +11,10 @@ patch-embed output at step τ.
 Reports two scalar summaries per checkpoint:
 
   * E_diag = sum_t M[t, t]^2 / sum_{t,τ} M[t, τ]^2  (diagonal energy concentration)
-  * T_eff = (sum_t M[t, t])^2 / sum_t M[t, t]^2     (participation ratio, time)
+  * T_eff = (sum_t M[t, t])^2 / sum_t M[t, t]^2     (diagonal coverage; legacy)
+  * E_past = sum_{t>τ} M[t, τ]^2 / sum_{t,τ} M[t, τ]^2
+  * mean_past_lag = energy-weighted mean of t-τ for t>τ
+  * T_eff_past = participation ratio of energy across positive temporal lags
 
 And saves a heatmap PNG (matplotlib, no GUI).
 
@@ -177,11 +180,31 @@ def compute_st_erf(model, x_sample) -> np.ndarray:
 
 def summarize(M: np.ndarray) -> dict[str, float]:
     diag = np.diag(M)
-    total = (M ** 2).sum()
+    energy = M ** 2
+    total = energy.sum()
     diag_e = (diag ** 2).sum() / max(total, 1e-30)
     s = diag.sum()
     t_eff = (s * s) / max((diag ** 2).sum(), 1e-30)
-    return {"E_diag": float(diag_e), "T_eff": float(t_eff)}
+
+    rows, cols = np.indices(M.shape)
+    past_mask = rows > cols
+    past_energy = energy[past_mask].sum()
+    e_past = past_energy / max(total, 1e-30)
+    mean_past_lag = (
+        (energy[past_mask] * (rows - cols)[past_mask]).sum() / max(past_energy, 1e-30)
+    )
+    lag_energy = np.asarray(
+        [np.diag(energy, k=-lag).sum() for lag in range(1, M.shape[0])],
+        dtype=np.float64,
+    )
+    t_eff_past = (lag_energy.sum() ** 2) / max((lag_energy ** 2).sum(), 1e-30)
+    return {
+        "E_diag": float(diag_e),
+        "T_eff": float(t_eff),
+        "E_past": float(e_past),
+        "mean_past_lag": float(mean_past_lag),
+        "T_eff_past": float(t_eff_past),
+    }
 
 
 def plot_heatmap(M: np.ndarray, out_path: Path, title: str) -> None:
@@ -241,6 +264,7 @@ def main():
     M_mean = np.mean(matrices, axis=0)
     stats = summarize(M_mean)
     print(f"[{args.task}/{args.condition}]  E_diag={stats['E_diag']:.3f}  T_eff={stats['T_eff']:.2f}  "
+          f"E_past={stats['E_past']:.3f}  mean_past_lag={stats['mean_past_lag']:.2f}  "
           f"  (n_samples={seen})")
 
     out_dir = Path(args.out_dir)
@@ -249,7 +273,11 @@ def main():
     plot_heatmap(
         M_mean,
         out_dir / f"st_erf_{args.task}_{args.condition}.png",
-        title=f"ST-ERF  {args.task}  {args.condition}\nE_diag={stats['E_diag']:.3f}  T_eff={stats['T_eff']:.2f}",
+        title=(
+            f"ST-ERF  {args.task}  {args.condition}\n"
+            f"E_diag={stats['E_diag']:.3f}  E_past={stats['E_past']:.3f}  "
+            f"mean_lag={stats['mean_past_lag']:.2f}"
+        ),
     )
 
     # Also append summary stats to a JSON.

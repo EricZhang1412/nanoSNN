@@ -268,10 +268,38 @@ def _split_cifar10dvs(dataset, split: str, train_ratio: float, seed: int, transf
     return TransformSubset(val_subset, transform=transform)
 
 
+def _split_official_train_dataset(
+    dataset,
+    split: str,
+    val_ratio: float,
+    seed: int,
+    transform=None,
+):
+    """Create deterministic train/val subsets without touching the official test split."""
+    if split not in {"train", "val"}:
+        raise ValueError(f"Expected train or val split, got {split}")
+    if not (0.0 < val_ratio < 1.0):
+        raise ValueError(f"val_ratio must be in (0, 1), got {val_ratio}")
+
+    val_len = int(math.floor(len(dataset) * val_ratio))
+    if val_len < 1 or val_len >= len(dataset):
+        raise ValueError(
+            f"val_ratio={val_ratio} produces an invalid split for {len(dataset)} samples"
+        )
+    train_len = len(dataset) - val_len
+    generator = torch.Generator().manual_seed(seed)
+    train_subset, val_subset = random_split(dataset, [train_len, val_len], generator=generator)
+    subset = train_subset if split == "train" else val_subset
+    return TransformSubset(subset, transform=transform)
+
+
 def build_event_dataset(data_config, split: str):
+    if split not in {"train", "val", "test"}:
+        raise ValueError(f"Unsupported event-data split: {split}")
+
     name = _dataset_name(data_config)
     root = os.path.expanduser(getattr(data_config, "root", "./datasets"))
-    transform = build_event_transform(data_config)
+    transform = build_event_transform(data_config, split)
     kwargs = _event_kwargs(data_config)
 
     if name == "cifar10dvs":
@@ -281,15 +309,26 @@ def build_event_dataset(data_config, split: str):
         return _split_cifar10dvs(dataset, split=split, train_ratio=train_ratio, seed=seed, transform=transform)
 
     if name == "dvs128gesture":
-        is_train = split == "train"
-        return DVS128Gesture(root=root, train=is_train, transform=transform, target_transform=None, **kwargs)
+        if split == "test":
+            return DVS128Gesture(
+                root=root, train=False, transform=transform, target_transform=None, **kwargs
+            )
+        dataset = DVS128Gesture(
+            root=root, train=True, transform=None, target_transform=None, **kwargs
+        )
+        return _split_official_train_dataset(
+            dataset,
+            split=split,
+            val_ratio=float(getattr(data_config, "val_ratio", 0.1)),
+            seed=int(getattr(data_config, "split_seed", 42)),
+            transform=transform,
+        )
 
     if name == "shd":
         if not _HAS_SHD:
             raise ImportError(
                 "SHD dataset support requires spikingjelly.datasets.shd; install spikingjelly>=0.0.0.14"
             )
-        is_train = split == "train"
         # SHD: data_type='frame' with frames_number=T and split_by='time' produces
         # numpy arrays of shape (T, 1, 700).  We pass the standard transform.
         shd_kwargs = {
@@ -300,12 +339,27 @@ def build_event_dataset(data_config, split: str):
             "custom_integrate_function": getattr(data_config, "custom_integrate_function", None),
             "custom_integrated_frames_dir_name": getattr(data_config, "custom_integrated_frames_dir_name", None),
         }
-        return SpikingHeidelbergDigits(
+        if split == "test":
+            return SpikingHeidelbergDigits(
+                root=root,
+                train=False,
+                transform=transform,
+                target_transform=None,
+                **shd_kwargs,
+            )
+        dataset = SpikingHeidelbergDigits(
             root=root,
-            train=is_train,
-            transform=transform,
+            train=True,
+            transform=None,
             target_transform=None,
             **shd_kwargs,
+        )
+        return _split_official_train_dataset(
+            dataset,
+            split=split,
+            val_ratio=float(getattr(data_config, "val_ratio", 0.1)),
+            seed=int(getattr(data_config, "split_seed", 42)),
+            transform=transform,
         )
 
     if name == "ucr":

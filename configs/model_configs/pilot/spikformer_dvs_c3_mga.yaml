@@ -16,6 +16,15 @@ mlp_ratio: 4.0
 
 attention_type: c3_mga
 mga_k_bits: 3   # 2^-3 = 1/8; hardware path: S - (S >> 3)
+mga_gamma_input: membrane
+mga_use_gamma: true
+mga_use_beta: true
+mga_init_tau: 4.0
+mga_init_V_gamma: 0.0
+mga_init_V_beta: 0.05
+mga_gate_input_norm: true
+mga_use_write_scale: true
+mga_init_write_scale: 0.125
 
 neuron_type: lif
 tau: 2.0

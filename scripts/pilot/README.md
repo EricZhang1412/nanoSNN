@@ -4,6 +4,10 @@ This directory implements the pilot protocol in `docs/PILOT_GATE1.md`:
 4 attention conditions × 3 seeds × 2 tasks (DVS128-Gesture + SHD), plus an
 ST-ERF diagnostic on seed-42 checkpoints.
 
+The original Gate-1 runs are historical and exploratory. New experiments use
+the corrected split/reporting protocol and frozen MGA-v2 definition in
+`docs/MGA_V2_SPEC.md`.
+
 ## What was added
 
 | File / path                                                       | Purpose                                                      |
@@ -34,9 +38,10 @@ uv run python -m scripts.pilot.sanity_attention
 Expected:
 - All four conditions forward without NaN.
 - Shared backbone keys identical; only gate keys differ.
-- `Δ(C2 - C0) == 0`, `Δ(C3 - C0) == 2 H D + 2 H`,
+- `Δ(C2 - C0) == 0`, `Δ(C3 - C0) == 2 H D + 2 H + 2 D + H`,
   `Δ(C1 - C0) ≈ 2 C r` (where `r = 16`).
-- FP-mults on the attention path: C0 = 0, C2 = 0, C3 = 0; C1 > 0.
+- Condition-specific recurrence FP-mults: C0 = 0, C1 > 0, C2 > 0; C3's
+  fixed-point state-decay mapping uses shift/subtract rather than a multiply.
 
 ## Full pilot on a single H100
 
@@ -63,6 +68,9 @@ manually:
 ```bash
 uv run python -m scripts.pilot.aggregate_results --results_dir pilot_results
 ```
+
+The aggregator requires at least three runs for C1/C2/C3 before emitting a
+PASS/PIVOT/FAIL verdict. Single-seed screens are labeled `INSUFFICIENT DATA`.
 
 Output:
 - `pilot_results/raw.csv`     — per-run JSON merged
@@ -99,6 +107,9 @@ The follow-up plan and command cookbook are in
 # SHD temporal horizon sweep: T=25/50/100/200, seed 42
 GPUS=0,1,2,3 RESULTS_DIR=pilot_results_t_sweep bash scripts/pilot/run_temporal_sweep.sh
 
+# Same sweep, with 3 independent single-card jobs per listed device (not DDP)
+GPUS=0,1,2,3 JOBS_PER_GPU=3 RESULTS_DIR=pilot_results_t_sweep bash scripts/pilot/run_temporal_sweep.sh
+
 # C3 ablations: membrane-vs-spike, gamma/beta, k_bits, write_scale
 GPUS=0,1,2,3 RESULTS_DIR=pilot_results_c3_ablation bash scripts/pilot/run_c3_ablation.sh
 
@@ -108,11 +119,11 @@ GPUS=0,1,2,3 RESULTS_DIR=pilot_results_seqmnist bash scripts/pilot/run_seqmnist_
 
 ## Datasets
 
-- **DVS128-Gesture**: spikingjelly auto-downloads to `data/dvs128gesture/`
+- **DVS128-Gesture**: spikingjelly auto-downloads to `datasets/dvs128gesture/`
   when first instantiated (already supported by the repo).
-- **SHD**: spikingjelly auto-downloads to `data/shd/` on first run.  Frames
+- **SHD**: spikingjelly auto-downloads to `datasets/shd/` on first run.  Frames
   are integrated to T=100 equal-time bins (`split_by=time`) on first use,
-  then cached as `.npz` under `data/shd/frames_number_100_split_by_time/`.
+  then cached as `.npz` under `datasets/shd/frames_number_100_split_by_time/`.
 
 ## Reproducibility / deviations
 
@@ -120,10 +131,8 @@ GPUS=0,1,2,3 RESULTS_DIR=pilot_results_seqmnist bash scripts/pilot/run_seqmnist_
 - For C3 (MGA), the K-LIF in the attention block is implemented manually
   (Python loop) to expose the pre-threshold membrane.  Hyperparameters
   match `build_neuron(model_config)` for the other LIFs (same `tau`,
-  `v_threshold`, surrogate); the spike output of this manual LIF matches
-  the spikingjelly LIF up to reset semantics — we use **soft reset** so
-  that the pre-threshold membrane can be recovered for the γ-gate, per
-  pilot §1 (which explicitly requires `U_k^{(t)}`, not the spike output).
+  `v_threshold`, surrogate, and hard reset); the spike output matches the
+  spikingjelly K-LIF while also exposing the membrane before threshold/reset.
 - All four conditions share an identical Q/V/proj backbone (param-equal
   modulo gate params).  Verify by inspecting `state_dict()` keys via
   `scripts/pilot/sanity_attention.py::test_isolation_state_dict`.

@@ -1,9 +1,10 @@
 name: cifar10dvs
-root: ./data/cifar10dvs
+root: ./datasets/cifar10dvs
 num_classes: 10
 image_size: 48
 in_channels: 2
 is_event: true
+download: true
 T: 10
 train_ratio: 0.9
 num_workers: 4

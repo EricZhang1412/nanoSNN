@@ -1,0 +1,17 @@
+{
+  "task": "shd_T50",
+  "condition": "c0_sdla",
+  "seed": 42,
+  "top1_best": 87.5442,
+  "top1_last10_mean": 85.5124,
+  "top1_last10_std": 1.2837,
+  "best_epoch": 78,
+  "epochs_to_90pct": -1,
+  "total_train_time_h": 4.34,
+  "params_total_M": 1.9207,
+  "params_gate_M": 0.0,
+  "spike_rate_attn_avg": null,
+  "fp_mults_attention_path_per_step": 0,
+  "gate_sparsity_gamma": null,
+  "gate_sparsity_beta": null
+}

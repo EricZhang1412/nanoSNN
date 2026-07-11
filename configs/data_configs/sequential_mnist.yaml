@@ -1,5 +1,5 @@
 name: sequential_mnist
-root: /data1/dataset/mnist
+root: ./datasets/mnist
 num_classes: 10
 is_event: true
 num_workers: 4

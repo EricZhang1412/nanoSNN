@@ -1,0 +1,9 @@
+label,condition,T,depth,num_heads,head_dim,gate_rank,fp_mults_per_block_step,fp_mults_per_model_step,fp_mults_per_model_sequence,gate_params,gate_params_M
+dvs128/c0_sdla,c0_sdla,16,2,4,64,,0,0,0,0,0.0
+dvs128/c1_lowrank,c1_lowrank,16,2,4,64,16,24576,49152,786432,4096,0.004096
+dvs128/c2_oneminusk,c2_oneminusk,16,2,4,64,,16384,32768,524288,0,0.0
+dvs128/c3_mga,c3_mga,16,2,4,64,,0,0,0,1304,0.001304
+shd/c0_sdla,c0_sdla,100,2,4,64,,0,0,0,0,0.0
+shd/c1_lowrank,c1_lowrank,100,2,4,64,16,24576,49152,4915200,4096,0.004096
+shd/c2_oneminusk,c2_oneminusk,100,2,4,64,,16384,32768,3276800,0,0.0
+shd/c3_mga,c3_mga,100,2,4,64,,0,0,0,1304,0.001304

@@ -34,9 +34,9 @@ from ..common.spike_ops import build_neuron
 def _bn1d(x: torch.Tensor, bn: nn.BatchNorm1d) -> torch.Tensor:
     """Apply BN1d on [T, B, N, C] by transposing C to dim -2 (matches Spikformer convention)."""
     T, B, N, C = x.shape
-    x = rearrange(x, "T B N C -> (T B) N C")
-    x = rearrange(bn(rearrange(x, "TB N C -> TB C N")), "TB C N -> TB N C")
-    return rearrange(x, "(T B) N C -> T B N C", T=T, B=B).contiguous()
+    x = x.reshape(T * B, N, C).transpose(1, 2).contiguous()
+    x = bn(x).transpose(1, 2).contiguous()
+    return x.reshape(T, B, N, C)
 
 
 # ---------------------------------------------------------------------------
@@ -326,8 +326,8 @@ class LinearAttentionC3(_GatedLinearAttentionBase):
     β-gate input = scalar mean K spike rate per (B, head).
     S_t = (1 - s_gamma_t * 2^-k_bits) S_{t-1} + s_beta_t * K_t^T V_t
 
-    Bit-shift k=3 makes the recurrence multiply-free on the attention path
-    (replace `*(1 - 2^-3)` with `S - (S >> 3)` in fixed-point hardware).
+    In a fixed-point deployment, bit-shift k=3 maps recurrent state decay to
+    `S - (S >> 3)`. The PyTorch reference path remains floating point.
     """
 
     def __init__(self, dim: int, num_heads: int, model_config):
@@ -348,8 +348,12 @@ class LinearAttentionC3(_GatedLinearAttentionBase):
         self.use_gamma_gate = bool(getattr(model_config, "mga_use_gamma", True))
         self.use_beta_gate = bool(getattr(model_config, "mga_use_beta", True))
 
-        # Initial tau = exp(log(4.0)) = 4.0 → alpha = 1 - 1/4 = 0.75
-        init_log_tau = math.log(4.0)
+        # Initial tau=4 gives alpha=0.75. Keep it configurable so the frozen
+        # experiment config records every condition-specific MGA default.
+        init_tau = float(getattr(model_config, "mga_init_tau", 4.0))
+        if init_tau <= 1.0:
+            raise ValueError(f"mga_init_tau must be > 1, got {init_tau}")
+        init_log_tau = math.log(init_tau)
         self.log_tau_gamma_raw = nn.Parameter(torch.full((H, D), init_log_tau))
         self.log_tau_beta_raw = nn.Parameter(torch.full((H,), init_log_tau))
 
@@ -393,8 +397,8 @@ class LinearAttentionC3(_GatedLinearAttentionBase):
         # (similar order of magnitude as C0's S = K^T V per step), preserving
         # information flow.  Log-parameterised so write_scale > 0 always.
         # NOTE: at deploy time write_scale is a per-head constant and can be
-        # absorbed into the output projection — the "multiply-free attention
-        # path" claim still holds for the inference hardware.
+        # absorbed into the output projection for the fixed-point deployment
+        # mapping used by the state-update complexity estimate.
         use_write_scale = bool(getattr(model_config, "mga_use_write_scale", True))
         if use_write_scale:
             init_ws = float(getattr(model_config, "mga_init_write_scale", 0.125))
@@ -477,7 +481,7 @@ class LinearAttentionC3(_GatedLinearAttentionBase):
             gamma_fire_sum = gamma_fire_sum + s_gamma.detach().float().mean()
             beta_fire_sum = beta_fire_sum + s_beta.detach().float().mean()
 
-            # Gated state update (multiply-free attention path):
+            # Gated state update (floating-point reference implementation):
             #   S = S_prev - s_gamma * (S_prev >> k)  + write_scale · s_beta · KV
             # write_scale is per-head constant; foldable into proj at deploy.
             decay_mask = s_gamma * self.shift_scale              # [B, H, D]
@@ -496,7 +500,7 @@ class LinearAttentionC3(_GatedLinearAttentionBase):
         return torch.stack(S_seq, dim=0)
 
     def estimate_attn_fp_mults_per_step(self, K_shape) -> int:
-        # Honest hardware accounting:
+        # Fixed-point deployment accounting for the recurrent state update:
         #   - alpha_eff * S_prev: in real hardware this is S_prev - (s_gamma * (S_prev >> k_bits))
         #     which is shift + subtract, NO FP-mult.  In PyTorch we use a multiply for clarity,
         #     but on chip it is multiply-free.

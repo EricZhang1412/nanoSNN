@@ -1,5 +1,5 @@
 name: ucr
-root: /data2/dataset/UCRArchive_2018
+root: ./datasets/UCRArchive_2018
 dataset: ECG200
 num_classes: 2
 is_event: true

@@ -57,6 +57,28 @@ class LitVisionSNN(L.LightningModule):
         self.model_config = model_config
         self.save_hyperparameters(ignore=["model"])
 
+        if str(os.environ.get("NANOSNN_TRITON_LIF", "")).lower() in {"1", "true", "yes", "on"}:
+            from .common.triton_lif import patch_lif_nodes_for_inference
+
+            enable_training = str(os.environ.get("NANOSNN_TRITON_LIF_TRAIN", "")).lower() in {
+                "1", "true", "yes", "on",
+            }
+            patched = patch_lif_nodes_for_inference(model, enable_training=enable_training)
+            rank_zero_info(
+                f"NANOSNN_TRITON_LIF patched {patched} LIF nodes "
+                f"(training_backward={enable_training})"
+            )
+
+        if str(os.environ.get("NANOSNN_STREAMING_ATTN", "")).lower() in {"1", "true", "yes", "on"}:
+            from .spikformer.streaming_attention import patch_gated_attention_streaming_inference
+
+            use_triton_attn = str(os.environ.get("NANOSNN_TRITON_ATTN", "")).lower() in {"1", "true", "yes", "on"}
+            patched = patch_gated_attention_streaming_inference(model, use_triton=use_triton_attn)
+            rank_zero_info(
+                f"NANOSNN_STREAMING_ATTN patched {patched} gated attention modules "
+                f"(triton_kernel={use_triton_attn})"
+            )
+
         self.T = int(getattr(model, "T", getattr(optimizer_config, "T", 4)))
         self._is_event_input = bool(getattr(data_config, "is_event", False))
         self._step_start_time = None
@@ -114,8 +136,13 @@ class LitVisionSNN(L.LightningModule):
     # ---------- forward + losses ----------
 
     def _prepare_input(self, x: torch.Tensor) -> torch.Tensor:
+        if getattr(self.model, "expects_temporal_input", True) is False:
+            return x
         if self._is_event_input:
             return x  # already [T, B, C, H, W]
+        if x.ndim == 5:
+            # Billeh/LGN front-ends already emit [T, B, C, H, W]; don't re-expand.
+            return x
         return expand_static_to_temporal(x, self.T)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -149,6 +176,18 @@ class LitVisionSNN(L.LightningModule):
         )
         quantile = torch.where(u >= 0, tau * huber / kappa, (1.0 - tau) * huber / kappa)
         return quantile.sum()
+
+    # ---------- logging helpers (DDP-safe / trainer-optional) ----------
+
+    def _log_metric(self, *args, **kwargs) -> None:
+        # No-op when called outside a Trainer (e.g. smoke / debug scripts).
+        if getattr(self, "_trainer", None) is not None:
+            self.log(*args, **kwargs)
+
+    def _should_sync_dist(self) -> bool:
+        # Only all-reduce metrics when actually running multi-process (DDP).
+        trainer = getattr(self, "_trainer", None)
+        return bool(trainer is not None and getattr(trainer, "world_size", 1) > 1)
 
     def _shared_step(self, batch, split: str):
         x, y = batch
@@ -197,24 +236,24 @@ class LitVisionSNN(L.LightningModule):
         topk = (1, 5) if num_classes >= 5 else (1,)
         accs = accuracy_at_k(logits_inf, y, topk=topk)
 
-        sync = split != "train"
+        sync = self._should_sync_dist()
         on_step = split == "train"
         log_kwargs = dict(on_step=on_step, on_epoch=True, sync_dist=sync, batch_size=batch_size)
-        self.log(f"{split}/loss", loss, prog_bar=True, **log_kwargs)
-        self.log(f"{split}/cls_loss", cls_loss, **log_kwargs)
+        self._log_metric(f"{split}/loss", loss, prog_bar=True, **log_kwargs)
+        self._log_metric(f"{split}/cls_loss", cls_loss, **log_kwargs)
         if self.voltage_cost > 0.0:
-            self.log(f"{split}/voltage_loss", voltage_loss, **log_kwargs)
+            self._log_metric(f"{split}/voltage_loss", voltage_loss, **log_kwargs)
         if self.rate_cost > 0.0:
-            self.log(f"{split}/rate_loss", rate_loss, **log_kwargs)
-        self.log(f"{split}/top1", accs["top1"], prog_bar=True, on_step=False, on_epoch=True,
+            self._log_metric(f"{split}/rate_loss", rate_loss, **log_kwargs)
+        self._log_metric(f"{split}/top1", accs["top1"], prog_bar=True, on_step=False, on_epoch=True,
                  sync_dist=sync, batch_size=batch_size)
         if num_classes >= 5:
-            self.log(f"{split}/top5", accs["top5"], on_step=False, on_epoch=True,
+            self._log_metric(f"{split}/top5", accs["top5"], on_step=False, on_epoch=True,
                      sync_dist=sync, batch_size=batch_size)
 
         spike_rate_hz = getattr(self.model, "latest_spike_rate_hz", None)
         if spike_rate_hz is not None:
-            self.log(
+            self._log_metric(
                 f"{split}/spike_rate_hz",
                 spike_rate_hz,
                 prog_bar=(split != "train"),
@@ -236,13 +275,13 @@ class LitVisionSNN(L.LightningModule):
             if torch.is_tensor(b):
                 beta_rates.append(b.detach())
         if gamma_rates:
-            self.log(
+            self._log_metric(
                 f"{split}/gate_gamma_rate",
                 torch.stack(gamma_rates).float().mean(),
                 on_step=on_step, on_epoch=True, sync_dist=sync, batch_size=batch_size,
             )
         if beta_rates:
-            self.log(
+            self._log_metric(
                 f"{split}/gate_beta_rate",
                 torch.stack(beta_rates).float().mean(),
                 on_step=on_step, on_epoch=True, sync_dist=sync, batch_size=batch_size,
@@ -273,7 +312,7 @@ class LitVisionSNN(L.LightningModule):
             elapsed = time.perf_counter() - self._step_start_time
             _, y = batch
             imgs = int(y.shape[0]) if hasattr(y, "shape") and y.ndim > 0 else 1
-            self.log("train/imgs_per_sec", imgs / elapsed, on_step=True, sync_dist=False)
+            self._log_metric("train/imgs_per_sec", imgs / elapsed, on_step=True, sync_dist=False)
 
     def configure_optimizers(self):
         lr = float(getattr(self.optimizer_config, "lr", 1e-3))

@@ -1,14 +1,22 @@
 # Gate-1 Pilot Decision And Follow-Up Plan
 
-This document freezes the current Gate-1 pilot interpretation and records the
-remote commands for the next experiment wave.  Run commands from the remote repo
-root, for example:
+This document records the legacy Gate-1 results and commands for the next
+experiment wave. Run commands from the repository root:
 
 ```bash
-cd /data/maluzhang-folder/zhangjy/projects/nanoSNN-gated-snn/nanoSNN
+cd /path/to/nanoSNN
 ```
 
 ## 1. Frozen Pilot Decision
+
+The original per-task numbers are retained below, but the preregistered overall
+decision was STOP: DVS has `C3-C1=-0.5902 pp`, which is neither PASS nor
+PIVOT-eligible, and the protocol specifies STOP if any task fails. Treat the
+long-horizon work as a new pivot hypothesis rather than a passed Gate-1.
+
+The legacy pipeline also used the official test split for validation and applied
+random SHD time shift during evaluation. These values are exploratory and must
+be rerun under `docs/MGA_V2_SPEC.md` before publication.
 
 Headline metric is `top1_last10_mean`, as pre-registered in
 `docs/PILOT_GATE1.md`.
@@ -37,9 +45,9 @@ main evidence for MGA's long-horizon advantage.
 | C2 one-minus-k | 85.0382 | 86.5844 |
 | C3 MGA | 86.3445 | 87.7542 |
 
-MGA does not meet the PASS threshold over C1 (`+0.315 pp < +0.5 pp`), but it is
-PIVOT-eligible: accuracy matches/slightly exceeds C1, it clearly beats C2
-(`+1.306 pp`), and the ST-ERF criterion is strongly satisfied.
+MGA does not meet the PASS threshold over C1 (`+0.315 pp < +0.5 pp`). It meets
+the original SHD-only PIVOT criterion relative to C2, but this does not override
+the overall STOP decision or the evaluation-protocol limitations.
 
 | condition | E_diag | T_eff |
 |---|---:|---:|
@@ -54,6 +62,11 @@ ST-ERF pivot check:
 T_eff(C3) - T_eff(C2) = 79.3646 - 69.2915 = +10.0731 > +2
 ```
 
+`T_eff` is computed only from `M[t,t]`; it measures diagonal coverage, not the
+length of cross-time influence. New diagnostics also report lower-triangular
+past energy and its lag distribution. The legacy pivot check is retained for
+auditability but is not sufficient evidence of temporal memory by itself.
+
 ## 2. Complexity / FP-Mult Accounting
 
 The code now records `fp_mults_attention_path_per_step` as gate-path FP
@@ -67,7 +80,11 @@ For the canonical H=4, D=64, depth=2 pilot configs:
 | C0 SDLA | 0 | 0 | 0 |
 | C1 lowrank | 24576 | 49152 | 4096 |
 | C2 one-minus-k | 16384 | 32768 | 0 |
-| C3 MGA | 0 | 0 | 1048 |
+| C3 MGA | 0 | 0 | 1304 |
+
+The C3 count includes two per-head LayerNorm affine parameter sets and the
+per-head write scale. The zero FP-multiply count applies only to a fixed-point
+mapping of recurrent state decay, not the gate LIFs or the full model.
 
 Generate the table:
 
@@ -109,6 +126,11 @@ cat pilot_results/figs/st_erf_summary.json
 
 ## 4. SHD Temporal-Horizon Sweep
 
+The existing seed-42 screening is incomplete and non-monotonic: C3 is +0.4108,
+-1.7667, and +0.6846 pp versus the strongest C1/C2 baseline at T=25, 50, and
+100 respectively; T=200 has only C0 completed. The T=100 result is promising,
+but no horizon has enough seeds for a confirmatory verdict.
+
 First run seed 42 across T=25/50/100/200:
 
 ```bash
@@ -128,7 +150,7 @@ bash scripts/pilot/run_temporal_sweep.sh
 Useful overrides:
 
 ```bash
-DATA_ROOT=/data/maluzhang-folder/datasets/SHD
+DATA_ROOT=/path/to/SHD
 BATCH_SIZE=96
 MAX_EPOCHS=100
 DRY_RUN=1

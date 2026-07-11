@@ -1,0 +1,17 @@
+{
+  "task": "shd_T100",
+  "condition": "c1_lowrank",
+  "seed": 42,
+  "top1_best": 87.3675,
+  "top1_last10_mean": 85.6979,
+  "top1_last10_std": 0.493,
+  "best_epoch": 66,
+  "epochs_to_90pct": -1,
+  "total_train_time_h": 10.854,
+  "params_total_M": 1.9248,
+  "params_gate_M": 0.004096,
+  "spike_rate_attn_avg": null,
+  "fp_mults_attention_path_per_step": 49152,
+  "gate_sparsity_gamma": null,
+  "gate_sparsity_beta": null
+}
